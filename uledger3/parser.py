@@ -58,8 +58,12 @@ def parse_date(line: str) -> tuple[datetime, int] | None:
     return (x, m.end())
 
 def parse_quantity(line: str) -> tuple[Decimal, int] | None:
-    m = re.match("-?[0-9,.]+", line)
+    m = re.match("-?[0-9,]+(\.[0-9]+)?", line)
     if not m:
         return None
-    return (Decimal(m.group(0).replace(',', '')), m.end())
+    comma = "," in m.group(0)
+    precision = 0
+    if m.group(1):
+        precision = len(m.group(1)) - 1
+    return (Decimal(m.group(0).replace(',', '')), comma, precision, m.end())
 
