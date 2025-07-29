@@ -1,11 +1,33 @@
 from typing import Union
-from collections import namedtuple
+from typing import NamedTuple
 from datetime import datetime
 import re
 from decimal import Decimal
 
-CommodityFormat = namedtuple("CommodityFormat",
-                             ["comma", "precision", "position", "space"])
+class CommodityFormat(NamedTuple):
+    comma: bool
+    precision: int
+    position: str
+    space: bool
+
+class ParseError(Exception):
+    def __init__(self, message: str,
+                 position: Union["Position", None] = None,
+                 context: str = ""):
+        if not position:
+            super().__init__(message)
+        elif context:
+            super().__init__(
+                f"{message}\n"
+                f"line: {position.line}, column: {position.column}\n"
+                f"{context}\n" + (position.column * " ") + "^"
+            )
+        else:
+            super().__init__(
+                f"{message}\n"
+                f"line: {position.line}, column: {position.column}\n"
+            )
+
 class Ledger():
     def __init__(self, name: str):
         self.name = name
@@ -25,46 +47,71 @@ class Ledger():
             return self.inferred_commodity_formats[commodity]
         return None
 
-Position = namedtuple("Position", ["line", "column"])
-Span = namedtuple("Span", ["start", "end"])
+class Position(NamedTuple):
+    line: int
+    column: int
+
+class Span(NamedTuple):
+    start: Position
+    end: Position
 
 class Entity():
     def __init__(self):
         self.span: Span | None = None
 
 class AccountDecl(Entity):
-    pass
+    def __init__(self, account: str):
+        super().__init__()
+        self.account = account
+        self.contents: list[str] = []
 
 class CommodityDecl(Entity):
-    pass
+    def __init__(self, commodity: str):
+        super().__init__()
+        self.commodity = commodity
+        self.contents: list[CommodityFormat | str] = []
 
 class PriceDecl(Entity):
-    pass
+    def __init__(self, commodity: str, date: datetime, price: "Amount"):
+        super().__init__()
+        self.commodity = commodity
+        self.date = date
+        self.price = price
 
 class Transaction(Entity):
     def __init__(self, date: datetime, status: str, payee: str):
-        super().__init__(self)
+        super().__init__()
         self.date = date
         self.status = status
         self.payee = payee
         self.contents: list[str | Posting] = []
 
-class Lot():
-    def __init__(self, commodity: str, date: datetime, price: "Amount"):
-        self.commodity = commodity
-        self.date = date
-        self.price = price
-        assert isinstance(price.commodity, str)
+class Lot(NamedTuple):
+    commodity: str
+    date: datetime
+    price: "Amount"
 
 class Amount(Entity):
     def __init__(self, quantity: Decimal, commodity: Lot | str,
                  unit_rate: Union["Amount", None] = None):
-        self.quantity = quantity
-        self.commodity = commodity
+        super().__init__()
+        self._quantity = quantity
+        self._commodity = commodity
         # Unit rate is specified with the "@" syntax.
-        self.unit_rate = unit_rate
+        self._unit_rate = unit_rate
         if unit_rate:
             assert isinstance(commodity, str)
+    @property
+    def quantity(self):
+        return self._quantity
+    @property
+    def commodity(self):
+        return self._commodity
+    @property
+    def unit_rate(self):
+        return self._unit_rate
+    def __hash__(self):
+        return hash((self._quantity, self._commodity, self._unit_rate))
     def __eq__(self, other):
         if not isinstance(other, Amount):
             return None
@@ -76,6 +123,7 @@ class Amount(Entity):
 
 class Posting(Entity):
     def __init__(self, account: str, amount: Amount):
+        super().__init__()
         self.account = account
         self.amount = amount
 
@@ -112,7 +160,7 @@ def parse_commodity(line: str, begin: int = 0) \
         return (None, len(line))
     line = line[begin:]
     quoted = '["\']([^"\']+)["\']'
-    unquoted = '[^\s0-9-"\']+'
+    unquoted = '[^\s@0-9-"\']+'
     m = re.match(quoted, line)
     if m:
         return (m.group(1), begin + m.end())
@@ -137,6 +185,29 @@ def parse_space(line: str, begin: int = 0) \
         return (None, len(line))
     line = line[begin:]
     m = re.match('[\s]+', line)
+    if m:
+        return (m.group(0), begin + m.end())
+    return (None, begin)
+
+def parse_account_name(line: str, begin: int = 0) \
+    -> tuple[str | None, int]:
+    if len(line) <= begin:
+        return (None, len(line))
+    line = line[begin:]
+    m = re.match('[^\s]([^\s]| ?[^\s])*', line)
+    if m:
+        x = m.group(0)
+        if x[0] == "(" and x[-1] != ")":
+            return (None, begin)
+        return (m.group(0), begin + m.end())
+    return (None, begin)
+
+def parse_keyword(keyword: str, line: str, begin: int = 0) \
+    -> tuple[str | None, int]:
+    if len(line) <= begin:
+        return (None, len(line))
+    line = line[begin:]
+    m = re.match(keyword, line)
     if m:
         return (m.group(0), begin + m.end())
     return (None, begin)
@@ -240,12 +311,94 @@ def parse_comment(line: str, begin: int = 0) \
     else:
         return (None, begin)
 
-class Parser():
-    def __init__(self, name: str):
-        self.ledger = Ledger(name)
+def strip_virtual_account(account: str) -> str:
+    if is_virtual_account(account):
+        return account[1:-1]
+    else:
+        return account
 
-    def _parse_amount(self, line: str, begin: int = 0):
-        pass
+def is_virtual_account(account: str) -> bool:
+    if len(account) > 1 and account[0] == "(" and account[-1] == ")":
+        return True
+    else:
+        return False
+
+class Parser():
+    def __init__(self, name: str, pedantic: bool = False):
+        self.ledger = Ledger(name)
+        self._current_line_number = 0
+        self._current_block = None
+        self._pedantic = pedantic
+
+    def _create_span(self, begin: int, end: int) -> Span:
+        return Span(
+            Position(self._current_line_number, begin),
+            Position(self._current_line_number, end)
+        )
+
+    def _pedantic_check_commodity(self,
+                                  commodity: str,
+                                  line: str,
+                                  begin: int) -> None:
+        if self._pedantic:
+            if commodity not in self.ledger.declared_commodities:
+                raise ParseError(
+                    "Commodity '{}' not declared".format(commodity),
+                    Position(self._current_line_number, begin), line)
+
+    def _pedantic_check_account(self,
+                                account: str,
+                                line: str,
+                                begin: int) -> None:
+        if self._pedantic:
+            account = strip_virtual_account(account)
+            if account not in self.ledger.declared_accounts:
+                raise ParseError(
+                    "Account '{}' not declared".format(account),
+                    Position(self._current_line_number, begin), line)
+
+    def _parse_amount(self, line: str, begin: int = 0) \
+        -> tuple[Amount | None, int]:
+        if len(line) <= begin:
+            return (None, len(line))
+        amount_1, consumed = parse_simple_amount(line, begin)
+        if not amount_1:
+            return (None, begin)
+        amount_1, cmdty_fmt = amount_1
+        self._pedantic_check_commodity(amount_1.commodity, line, begin)
+        amount_1.span = self._create_span(begin, consumed - 1)
+        self._update_inferred_commodity_format(amount_1.commodity, cmdty_fmt)
+        space, consumed = parse_space(line, consumed)
+        if len(line) <= consumed:
+            assert len(line) == consumed
+            return (amount_1, consumed)
+        elif line[consumed] == "@":
+            consumed += 1
+            space, consumed_x = parse_space(line, consumed)
+            amount_2, consumed = parse_simple_amount(line, consumed_x)
+            if not amount_2:
+                raise ParseError("Expected unit rate",
+                                 Position(self._current_line_number, consumed),
+                                 line)
+            amount_2, cmdty_fmt = amount_2
+            amount_2.span = self._create_span(consumed_x, consumed - 1)
+            self._pedantic_check_commodity(amount_2.commodity, line, consumed_x)
+            self._update_inferred_commodity_format(amount_2.commodity, cmdty_fmt)
+            x = Amount(amount_1.quantity, amount_1.commodity, amount_2)
+            x.span = self._create_span(begin, consumed - 1)
+            return (x, consumed)
+        else:
+            consumed_x = consumed
+            lot, consumed = parse_lot_date_and_price(line, consumed)
+            if not lot:
+                return (amount_1, consumed)
+            date, price, cmdty_fmt = lot
+            self._pedantic_check_commodity(price.commodity, line, consumed_x)
+            self._update_inferred_commodity_format(price.commodity, cmdty_fmt)
+            lot = Lot(amount_1.commodity, date, price)
+            amount = Amount(amount_1.quantity, lot)
+            amount.span = self._create_span(begin, consumed - 1)
+            return (amount, consumed)
 
     def _update_inferred_commodity_format(
             self, commodity: str, new_format: CommodityFormat) -> None:
@@ -259,3 +412,221 @@ class Parser():
                 CommodityFormat(comma, precision, position, space)
         else:
             self.ledger.inferred_commodity_formats[commodity] = new_format
+
+    def _parse_space_or_error(self,
+                              message: str,
+                              line: str, begin: int) -> tuple[str, int]:
+        space, consumed = parse_space(line, begin)
+        if not space:
+            raise ParseError(
+                message,
+                Position(self._current_line_number, consumed),
+                line)
+        return (space, consumed)
+
+    def _finish_parse_commodity_decl(self, line: str, begin: int = 0) \
+        -> CommodityDecl:
+        commodity, consumed = parse_keyword("commodity", line, begin)
+        assert commodity
+        space, consumed = self._parse_space_or_error(
+            "Commodity declaration not well formed.", line, consumed)
+        commodity, consumed = parse_commodity(line, consumed)
+        space, consumed = parse_space(line, consumed)
+        comment, consumed = parse_comment(line, consumed)
+        if (not commodity) or (consumed < len(line)):
+            raise ParseError(
+                "Commodity declaration not well formed",
+                Position(self._current_line_number, consumed), line)
+        return CommodityDecl(commodity)
+
+    def _finish_parse_account_decl(self, line: str, begin: int = 0) \
+        -> AccountDecl:
+        account, consumed = parse_keyword("account", line, begin)
+        assert account
+        space, consumed = self._parse_space_or_error(
+            "Price declaration not well formed.", line, consumed)
+        account, consumed = parse_account_name(line, consumed)
+        space, consumed = parse_space(line, consumed)
+        comment, consumed = parse_comment(line, consumed)
+        if (not account) or (consumed < len(line)):
+            raise ParseError(
+                "Account declaration not well formed",
+                Position(self._current_line_number, consumed), line)
+        return AccountDecl(account)
+
+    def _finish_parse_price_decl(self, line: str, begin: int = 0) \
+        -> PriceDecl:
+        P, consumed = parse_keyword("P", line, begin)
+        assert P
+        space, consumed = self._parse_space_or_error(
+            "Price declaration not well formed.", line, consumed)
+        date, consumed = parse_date(line, consumed)
+        space, consumed = self._parse_space_or_error(
+            "Price declaration not well formed.", line, consumed)
+        commodity, consumed = parse_commodity(line, consumed)
+        price = None
+        if commodity:
+            space, consumed = parse_space(line, consumed)
+            price, consumed = parse_simple_amount(line, consumed)
+        if (not price) or (not commodity) or (consumed < len(line)):
+            raise ParseError(
+                "Account declaration not well formed",
+                Position(self._current_line_number, consumed), line)
+        price, _ = price
+        return PriceDecl(commodity, date, price)
+
+    def _finish_parse_transaction_start(self, line: str, begin: int = 0) \
+        -> Transaction:
+        line = line.rstrip()
+        date, consumed = parse_date(line, begin)
+        assert date
+        if len(line) == consumed:
+            return Transaction(date, None, None)
+        space, consumed = self._parse_space_or_error(
+            "Transaction header not well formed.", line, consumed)
+        status, consumed = parse_keyword("\*|\!", line, consumed)
+        if len(line) == consumed:
+            return Transaction(date, status, None)
+        if status:
+            space, consumed = self._parse_space_or_error(
+                "Transaction header not well formed.", line, consumed)
+        return Transaction(date, status, line[consumed:])
+
+    def _finish_parse_commodity_decl_contents(self, line: str, begin: int = 0) \
+        -> str | CommodityFormat:
+        line = line.rstrip()
+        space, consumed = self._parse_space_or_error(
+            "Expected indentation.", line, begin)
+        fmt, consumed = parse_keyword("format", line, consumed)
+        if fmt:
+            space, consumed = self._parse_space_or_error(
+                "Format statement not well formed.", line, consumed)
+            fmt, consumed =  parse_simple_amount(line, consumed)
+            space, consumed = parse_space(line, consumed)
+            comment, consumed = parse_comment(line, consumed)
+            if (not fmt) or (consumed < len(line)):
+                raise ParseError(
+                    "Format statement not well formed",
+                    Position(self._current_line_number, consumed), line)
+            return fmt[1]
+        else:
+            # rstripped line definitely has some more content.
+            assert len(line) > consumed
+            return line[consumed:]
+
+    def _finish_parse_account_decl_contents(self, line: str, begin: int = 0) \
+        -> str:
+        line = line.rstrip()
+        space, consumed = self._parse_space_or_error(
+            "Expected indentation.", line, consumed)
+        # rstripped line definitely has some more content.
+        assert len(line) > consumed
+        return line[consumed:]
+
+    def _finish_parse_transaction_contents(self, line: str, begin: int = 0) \
+        -> str | Posting:
+        line = line.rstrip()
+        space, consumed = self._parse_space_or_error(
+            "Expected indentation.", line, begin)
+        # rstripped line definitely has some more content.
+        comment, consumed = parse_comment(line, consumed)
+        if comment:
+            return comment
+        consumed_x = consumed
+        account, consumed = parse_account_name(line, consumed)
+        if not account:
+            raise ParseError(
+                "Posting (account) not well formed",
+                Position(self._current_line_number, consumed), line)
+        self._pedantic_check_account(account, line, consumed_x)
+        consumed_x = consumed
+        space, consumed = parse_space(line, consumed)
+        comment, consumed = parse_comment(line, consumed)
+        if len(line) == consumed:
+            return Posting(account, None)
+        space, consumed = parse_hard_space(line, consumed_x)
+        if not space:
+            raise ParseError(
+                "Posting not well formed",
+                Position(self._current_line_number, consumed), line)
+        amount, consumed = self._parse_amount(line, consumed)
+        space, consumed = parse_space(line, consumed)
+        comment, consumed = parse_comment(line, consumed)
+        if (not amount) or (consumed < len(line)):
+            raise ParseError(
+                "Format statement not well formed",
+                Position(self._current_line_number, consumed), line)
+        return Posting(account, amount)
+
+    def parse_line(self, line: str) -> None:
+        self._current_line_number += 1
+
+        line = line.rstrip()
+        if not line:
+            self.ledger.contents.append(line)
+            return None
+
+        commodity, _ = parse_keyword("commodity", line)
+        account,   _ = parse_keyword("account", line)
+        P,         _ = parse_keyword("P", line)
+        tag,       _ = parse_keyword("tag", line)
+        date,      _ = parse_date(line)
+        indent,    _ = parse_space(line)
+        comment,   _ = parse_comment(line)
+
+        line_span = self._create_span(0, len(line) - 1)
+        line_end = Position(self._current_line_number, len(line) - 1)
+
+        if commodity:
+            c = self._finish_parse_commodity_decl(line)
+            c.span = line_span
+            self.ledger.contents.append(c)
+            self.ledger.declared_commodities.add(c.commodity)
+        elif account:
+            a = self._finish_parse_account_decl(line)
+            a.span = line_span
+            self.ledger.contents.append(a)
+            self.ledger.declared_accounts.add(a.account)
+        elif P:
+            p = self._finish_parse_price_decl(line)
+            p.span = line_span
+            self.ledger.contents.append(p)
+        elif date:
+            t = self._finish_parse_transaction_start(line)
+            t.span = line_span
+            self.ledger.contents.append(t)
+        elif indent:
+            if len(self.ledger.contents) == 0:
+                raise ParseError(
+                    "Unexpected indent",
+                    Position(self._current_line_number, 0), line)
+            x = self.ledger.contents[-1]
+            if isinstance(x, CommodityDecl):
+                y = self._finish_parse_commodity_decl_contents(line)
+                if isinstance(y, CommodityFormat):
+                    y.span = line_span
+                    self.ledger.declared_commodity_formats[x.commodity] = y
+                x.contents.append(y)
+                x.span = Span(x.span.start, line_end)
+            elif isinstance(x, AccountDecl):
+                y = self._finish_parse_account_decl_contents(line)
+                x.contents.append(y)
+                x.span = Span(x.span.start, line_end)
+            elif isinstance(x, Transaction):
+                y = self._finish_parse_transaction_contents(line)
+                if isinstance(y, Posting):
+                    y.span = line_span
+                x.contents.append(y)
+                x.span = Span(x.span.start, line_end)
+            else:
+                raise ParseError(
+                    "Unexpected indent",
+                    Position(self._current_line_number, 0), line)
+        elif comment:
+            self.ledger.contents.append(comment)
+        elif tag:
+            self.ledger.contents.append(line)
+        else:
+            raise ParseError(
+                "Unable to parse line",
+                Position(self._current_line_number, 0), line)

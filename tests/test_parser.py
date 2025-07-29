@@ -157,3 +157,142 @@ class TestParser(unittest.TestCase):
         b = parser.CommodityFormat( True, 4, "right", False)
         self.assertEqual(l.ledger.get_commodity_format("c1"), a)
         self.assertEqual(l.ledger.get_commodity_format("c2"), b)
+
+    def test_parser_parse_amount(self):
+        l = parser.Parser("test")
+        x = l._parse_amount("eur 256.239")
+        self.assertEqual(x, (parser.Amount(Decimal('256.239'), "eur"), 11))
+        x = l._parse_amount("$256.239")
+        self.assertEqual(x, (parser.Amount(Decimal('256.239'), "$"), 8))
+        with self.assertRaises(parser.ParseError):
+            x = l._parse_amount("$256.239 @ abc")
+        x = l._parse_amount("$256.239 @ EUR 23")
+        self.assertEqual(x,
+                         (parser.Amount(Decimal('256.239'), "$",
+                                        parser.Amount(Decimal('23'), "EUR")),
+                          17))
+        x = l._parse_amount("$256.239 [2022/01/17] {EUR 36.00} ; abc")
+        self.assertEqual(x,
+                         (parser.Amount(Decimal('256.239'),
+                                        parser.Lot("$",
+                                                   datetime(2022, 1, 17),
+                                                   parser.Amount(Decimal('36'),
+                                                                 "EUR"))),
+                          33))
+
+    def test_parse_account_name(self):
+        x = parser.parse_account_name("abc:def:g h i:jk l  abc")
+        self.assertEqual(x, ("abc:def:g h i:jk l", 18))
+        x = parser.parse_account_name("-2004.9658/01/02brownjarsprevented")
+        self.assertEqual(x, ("-2004.9658/01/02brownjarsprevented", 34))
+        x = parser.parse_account_name("-2004.9658/01/02brownjarsprevented  abc")
+        self.assertEqual(x, ("-2004.9658/01/02brownjarsprevented", 34))
+
+    def test_parse_keyword(self):
+        x = parser.parse_keyword("tag", "  tag abc", 2)
+        self.assertEqual(x, ("tag", 5))
+        x = parser.parse_keyword("tag", "tag abc", 2)
+        self.assertEqual(x, (None, 2))
+        x = parser.parse_keyword("tag", "tag abc")
+        self.assertEqual(x, ("tag", 3))
+
+    def test_parser_finish_parse_commodity_decl(self):
+        l = parser.Parser("test")
+        with self.assertRaises(parser.ParseError):
+            x = l._finish_parse_commodity_decl("commodity test1")
+        x = l._finish_parse_commodity_decl("commodity 'test1'")
+        self.assertEqual(x.commodity, "test1")
+
+    def test_parser_finish_parse_account_decl(self):
+        l = parser.Parser("test")
+        x = l._finish_parse_account_decl("account test1")
+        self.assertEqual(x.account, "test1")
+        with self.assertRaises(parser.ParseError):
+            x = l._finish_parse_account_decl("account test1:test 2  test3")
+        x = l._finish_parse_account_decl("account test1:test 2 test3")
+        self.assertEqual(x.account, "test1:test 2 test3")
+
+    def test_parser_finish_parse_price_decl(self):
+        l = parser.Parser("test")
+        x = l._finish_parse_price_decl("P 2022/01/02 abc $6")
+        self.assertEqual(x.commodity, "abc")
+        self.assertEqual(x.date, datetime(2022, 1, 2))
+        self.assertEqual(x.price, parser.Amount(Decimal("6"), "$"))
+        x = l._finish_parse_price_decl("P 2022/01/02 abc $$6")
+        self.assertEqual(x.price, parser.Amount(Decimal("6"), "$$"))
+        with self.assertRaises(parser.ParseError):
+            x = l._finish_parse_price_decl("P 2022/01/02 abc $ $6")
+
+    def test_parser_finish_parse_transaction_start(self):
+        l = parser.Parser("test")
+        x = l._finish_parse_transaction_start("2022/01/02 * abc123 ghi ")
+        self.assertEqual(x.date, datetime(2022, 1, 2))
+        self.assertEqual(x.status, "*")
+        self.assertEqual(x.payee, "abc123 ghi")
+        x = l._finish_parse_transaction_start("2022/01/02  abc123 ghi ")
+        self.assertEqual(x.date, datetime(2022, 1, 2))
+        self.assertEqual(x.status, None)
+        self.assertEqual(x.payee, "abc123 ghi")
+        x = l._finish_parse_transaction_start("2022/01/02   ")
+        self.assertEqual(x.date, datetime(2022, 1, 2))
+        self.assertEqual(x.status, None)
+        self.assertEqual(x.payee, None)
+        x = l._finish_parse_transaction_start("2022/01/02  ! ")
+        self.assertEqual(x.date, datetime(2022, 1, 2))
+        self.assertEqual(x.status, "!")
+        self.assertEqual(x.payee, None)
+
+    def test_parser_finish_parse_commodity_decl_contents(self):
+        l = parser.Parser("test")
+        x = l._finish_parse_commodity_decl_contents("  format $123.45")
+        # ["comma", "precision", "position", "space"])
+        b = parser.CommodityFormat(False, 2, "left", False)
+        self.assertEqual(x, b)
+        x = l._finish_parse_commodity_decl_contents("  abc def  ghi ")
+        self.assertEqual(x, "abc def  ghi")
+        with self.assertRaises(parser.ParseError):
+            x = l._finish_parse_commodity_decl_contents("  format$123.45")
+        with self.assertRaises(parser.ParseError):
+            x = l._finish_parse_commodity_decl_contents("  format 123.45")
+
+    def test_parser_finish_parse_transaction_contents(self):
+        l = parser.Parser("test")
+        x = l._finish_parse_transaction_contents("  format $123.45")
+        self.assertEqual(x.account, "format $123.45")
+        self.assertEqual(x.amount, None)
+        with self.assertRaises(parser.ParseError):
+            x = l._finish_parse_transaction_contents("  format  $123.45 l")
+        x = l._finish_parse_transaction_contents("  format  $123.45")
+        self.assertEqual(x.account, "format")
+        self.assertEqual(x.amount, parser.Amount(Decimal("123.45"), "$"))
+        with self.assertRaises(parser.ParseError):
+            x = l._finish_parse_transaction_contents("  format  123.45 EUR k")
+        x = l._finish_parse_transaction_contents("  format  123.45 EUR ; k")
+        self.assertEqual(x.account, "format")
+        self.assertEqual(x.amount, parser.Amount(Decimal("123.45"), "EUR"))
+
+    def test_parser_parse_line(self):
+        l = parser.Parser("test", pedantic=True)
+        with self.assertRaises(parser.ParseError):
+            l.parse_line(" hello")
+        l.parse_line("2021/11/03 payee")
+        with self.assertRaises(parser.ParseError):
+            l.parse_line("  2021/11/03 acc1")
+        with self.assertRaises(parser.ParseError):
+            l.parse_line("  2021/11/03 acc2  EUR 15")
+        l.parse_line("commodity EUR")
+        l.parse_line("2021/11/03 payee")
+        with self.assertRaises(parser.ParseError):
+            l.parse_line("  2021/11/03 acc1")
+        with self.assertRaises(parser.ParseError):
+            l.parse_line("  2021/11/03 acc2  EUR 15")
+        l.parse_line("account 2021/11/03 acc1")
+        l.parse_line("2021/11/03 payee")
+        l.parse_line("  2021/11/03 acc1")
+        with self.assertRaises(parser.ParseError):
+            l.parse_line("  2021/11/03 acc2  EUR 15")
+        l.parse_line("account 2021/11/03 acc2")
+        l.parse_line("2021/11/03 payee")
+        l.parse_line("  (2021/11/03 acc1)  EUR 17")
+        l.parse_line("  2021/11/03 acc1")
+        l.parse_line("  2021/11/03 acc2  EUR 15")
