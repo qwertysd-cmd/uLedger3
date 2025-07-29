@@ -1,5 +1,6 @@
 from typing import Union
 from typing import NamedTuple
+from typing import Iterable
 from datetime import datetime
 import re
 from decimal import Decimal
@@ -28,7 +29,7 @@ class ParseError(Exception):
                 f"line: {position.line}, column: {position.column}\n"
             )
 
-class Ledger():
+class Journal():
     def __init__(self, name: str):
         self.name = name
         self.contents: list[str |
@@ -56,8 +57,8 @@ class Span(NamedTuple):
     end: Position
 
 class Entity():
-    def __init__(self):
-        self.span: Span | None = None
+    def __init__(self, span: Span | None = None):
+        self.span: Span | None = span
 
 class AccountDecl(Entity):
     def __init__(self, account: str):
@@ -325,7 +326,7 @@ def is_virtual_account(account: str) -> bool:
 
 class Parser():
     def __init__(self, name: str, pedantic: bool = False):
-        self.ledger = Ledger(name)
+        self.journal = Journal(name)
         self._current_line_number = 0
         self._current_block = None
         self._pedantic = pedantic
@@ -341,7 +342,7 @@ class Parser():
                                   line: str,
                                   begin: int) -> None:
         if self._pedantic:
-            if commodity not in self.ledger.declared_commodities:
+            if commodity not in self.journal.declared_commodities:
                 raise ParseError(
                     "Commodity '{}' not declared".format(commodity),
                     Position(self._current_line_number, begin), line)
@@ -352,7 +353,7 @@ class Parser():
                                 begin: int) -> None:
         if self._pedantic:
             account = strip_virtual_account(account)
-            if account not in self.ledger.declared_accounts:
+            if account not in self.journal.declared_accounts:
                 raise ParseError(
                     "Account '{}' not declared".format(account),
                     Position(self._current_line_number, begin), line)
@@ -402,16 +403,16 @@ class Parser():
 
     def _update_inferred_commodity_format(
             self, commodity: str, new_format: CommodityFormat) -> None:
-        if commodity in self.ledger.inferred_commodity_formats:
-            old_format = self.ledger.inferred_commodity_formats[commodity]
+        if commodity in self.journal.inferred_commodity_formats:
+            old_format = self.journal.inferred_commodity_formats[commodity]
             comma = old_format.comma or new_format.comma
             precision = max(old_format.precision, new_format.precision)
             position = old_format.position
             space = old_format.space
-            self.ledger.inferred_commodity_formats[commodity] = \
+            self.journal.inferred_commodity_formats[commodity] = \
                 CommodityFormat(comma, precision, position, space)
         else:
-            self.ledger.inferred_commodity_formats[commodity] = new_format
+            self.journal.inferred_commodity_formats[commodity] = new_format
 
     def _parse_space_or_error(self,
                               message: str,
@@ -563,7 +564,7 @@ class Parser():
 
         line = line.rstrip()
         if not line:
-            self.ledger.contents.append(line)
+            self.journal.contents.append(line)
             return None
 
         commodity, _ = parse_keyword("commodity", line)
@@ -580,32 +581,31 @@ class Parser():
         if commodity:
             c = self._finish_parse_commodity_decl(line)
             c.span = line_span
-            self.ledger.contents.append(c)
-            self.ledger.declared_commodities.add(c.commodity)
+            self.journal.contents.append(c)
+            self.journal.declared_commodities.add(c.commodity)
         elif account:
             a = self._finish_parse_account_decl(line)
             a.span = line_span
-            self.ledger.contents.append(a)
-            self.ledger.declared_accounts.add(a.account)
+            self.journal.contents.append(a)
+            self.journal.declared_accounts.add(a.account)
         elif P:
             p = self._finish_parse_price_decl(line)
             p.span = line_span
-            self.ledger.contents.append(p)
+            self.journal.contents.append(p)
         elif date:
             t = self._finish_parse_transaction_start(line)
             t.span = line_span
-            self.ledger.contents.append(t)
+            self.journal.contents.append(t)
         elif indent:
-            if len(self.ledger.contents) == 0:
+            if len(self.journal.contents) == 0:
                 raise ParseError(
                     "Unexpected indent",
                     Position(self._current_line_number, 0), line)
-            x = self.ledger.contents[-1]
+            x = self.journal.contents[-1]
             if isinstance(x, CommodityDecl):
                 y = self._finish_parse_commodity_decl_contents(line)
                 if isinstance(y, CommodityFormat):
-                    y.span = line_span
-                    self.ledger.declared_commodity_formats[x.commodity] = y
+                    self.journal.declared_commodity_formats[x.commodity] = y
                 x.contents.append(y)
                 x.span = Span(x.span.start, line_end)
             elif isinstance(x, AccountDecl):
@@ -623,10 +623,14 @@ class Parser():
                     "Unexpected indent",
                     Position(self._current_line_number, 0), line)
         elif comment:
-            self.ledger.contents.append(comment)
+            self.journal.contents.append(comment)
         elif tag:
-            self.ledger.contents.append(line)
+            self.journal.contents.append(line)
         else:
             raise ParseError(
                 "Unable to parse line",
                 Position(self._current_line_number, 0), line)
+
+    def parse_lines(self, lines: Iterable[str]) -> None:
+        for i in lines:
+            self.parse_line(i)

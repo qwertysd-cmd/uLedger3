@@ -6,8 +6,8 @@ import uledger3.parser as parser
 
 class TestParser(unittest.TestCase):
 
-    def test_ledger(self):
-        p = parser.Ledger("test")
+    def test_journal(self):
+        p = parser.Journal("test")
 
     def test_parse_date(self):
         x = parser.parse_date("2004/01/02brownjarsprevented")
@@ -155,8 +155,8 @@ class TestParser(unittest.TestCase):
         l._update_inferred_commodity_format("c2", x)
         a = parser.CommodityFormat( True, 4,  "left", True)
         b = parser.CommodityFormat( True, 4, "right", False)
-        self.assertEqual(l.ledger.get_commodity_format("c1"), a)
-        self.assertEqual(l.ledger.get_commodity_format("c2"), b)
+        self.assertEqual(l.journal.get_commodity_format("c1"), a)
+        self.assertEqual(l.journal.get_commodity_format("c2"), b)
 
     def test_parser_parse_amount(self):
         l = parser.Parser("test")
