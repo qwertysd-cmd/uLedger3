@@ -7,7 +7,11 @@ from decimal import Decimal
 class Ledger():
     def __init__(self, name: str):
         self.name = name
-        self.contents: list[str | AccountDecl | CommodityDecl | PriceDecl] = []
+        self.contents: list[str |
+                            AccountDecl |
+                            CommodityDecl |
+                            PriceDecl |
+                            Transaction] = []
 
 Position = namedtuple("Position", ["line", "column"])
 Span = namedtuple("Span", ["start", "end"])
@@ -21,6 +25,9 @@ class AccountDecl(Entity):
 
 class CommodityDecl(Entity):
     pass
+
+CommodityFormat = namedtuple("CommodityFormat",
+                             ["comma", "precision", "position", "space"])
 
 class PriceDecl(Entity):
     pass
@@ -42,53 +49,133 @@ class Lot():
 
 class Amount(Entity):
     def __init__(self, quantity: Decimal, commodity: Lot | str,
-                 at_rate: Union["Amount", None] = None):
+                 unit_rate: Union["Amount", None] = None):
         self.quantity = quantity
         self.commodity = commodity
-        self.at_rate = at_rate
-        if at_rate:
+        # Unit rate is specified with the "@" syntax.
+        self.unit_rate = unit_rate
+        if unit_rate:
             assert isinstance(commodity, str)
+    def __eq__(self, other):
+        if not isinstance(other, Amount):
+            return None
+        return (self.quantity == other.quantity and
+                self.commodity == other.commodity and
+                self.unit_rate == other.unit_rate)
+    def __repr__(self):
+        return f"Amount({self.quantity}, {self.commodity}, {self.unit_rate})"
 
 class Posting(Entity):
     def __init__(self, account: str, amount: Amount):
         self.account = account
         self.amount = amount
 
-def parse_date(line: str) -> tuple[datetime, int] | None:
+def parse_date(line: str, begin: int = 0) -> tuple[datetime | None, int]:
+    if len(line) <= begin:
+        return (None, len(line))
+    line = line[begin:]
     m = re.match("(\d{4})/(\d{1,2})/(\d{1,2})", line)
     if not m:
         m = re.match("(\d{4})-(\d{1,2})-(\d{1,2})", line)
     if not m:
-        return None
+        return (None, begin)
     x = datetime(int(m.group(1)), int(m.group(2)), int(m.group(3)))
-    return (x, m.end())
+    return (x, begin + m.end())
 
-def parse_quantity(line: str) -> tuple[Decimal, int, bool, int] | None:
+def parse_quantity(line: str, begin: int = 0) \
+    -> tuple[tuple[Decimal, int, bool] | None, int]:
+    if len(line) <= begin:
+        return (None, len(line))
+    line = line[begin:]
     m = re.match("-?[0-9,]+(\.[0-9]+)?", line)
     if not m:
-        return None
+        return (None, begin)
     comma = "," in m.group(0)
     precision = 0
     if m.group(1):
         precision = len(m.group(1)) - 1
-    return (Decimal(m.group(0).replace(',', '')), m.end(), comma, precision)
+    return ((Decimal(m.group(0).replace(',', '')), comma, precision),
+            begin + m.end())
 
-def parse_commodity(line: str) -> tuple[str, int] | None:
+def parse_commodity(line: str, begin: int = 0) \
+    -> tuple[str | None, int]:
+    if len(line) <= begin:
+        return (None, len(line))
+    line = line[begin:]
     quoted = '["\']([^"\']+)["\']'
     unquoted = '[^\s0-9-"\']+'
     m = re.match(quoted, line)
     if m:
-        return (m.group(1), m.end())
+        return (m.group(1), begin + m.end())
     m = re.match(unquoted, line)
     if m:
-        return (m.group(0), m.end())
+        return (m.group(0), begin + m.end())
+    return (None, begin)
 
-def parse_hard_space(line: str) -> tuple[str, int] | None:
+def parse_hard_space(line: str, begin: int = 0) \
+    -> tuple[str | None, int]:
+    if len(line) <= begin:
+        return (None, len(line))
+    line = line[begin:]
     m = re.match('[\s]{2,}|\t', line)
     if m:
-        return (m.group(0), m.end())
+        return (m.group(0), begin + m.end())
+    return (None, begin)
 
-def parse_space(line: str) -> tuple[str, int] | None:
+def parse_space(line: str, begin: int = 0) \
+    -> tuple[str | None, int]:
+    if len(line) <= begin:
+        return (None, len(line))
+    line = line[begin:]
     m = re.match('[\s]+', line)
     if m:
-        return (m.group(0), m.end())
+        return (m.group(0), begin + m.end())
+    return (None, begin)
+
+def parse_simple_amount(line: str, begin: int = 0) \
+    -> tuple[tuple[Amount, CommodityFormat] | None, int]:
+    if len(line) <= begin:
+        return (None, len(line))
+
+    commodity, consumed = parse_commodity(line, begin)
+    if commodity:
+        # [commodity] [quantity]
+        space, consumed = parse_space(line, consumed)
+        quantity, consumed = parse_quantity(line, consumed)
+        if not quantity:
+            return (None, begin)
+        quantity, comma, precision = quantity
+        amount = Amount(quantity, commodity)
+        return ((amount,
+                 CommodityFormat(comma, precision, "left", bool(space))),
+                consumed)
+    else:
+        # [quantity] [commodity]
+        quantity, consumed = parse_quantity(line, begin)
+        if not quantity:
+            return (None, begin)
+        quantity, comma, precision = quantity
+        space, consumed = parse_space(line, consumed)
+        commodity, consumed = parse_commodity(line, consumed)
+        if not commodity:
+            return (None, begin)
+        amount = Amount(quantity, commodity)
+        return ((amount,
+                 CommodityFormat(comma, precision, "right", bool(space))),
+                consumed)
+
+def parse_lot_date(line: str, begin: int = 0) -> tuple[datetime | None, int]:
+    if len(line) <= begin:
+        return (None, len(line))
+    if line[begin] != "[":
+        return (None, begin)
+    consumed = begin + 1
+    space, consumed = parse_space(line, consumed)
+    date, consumed = parse_date(line, consumed)
+    if (date is None) or (len(line) <= consumed):
+        return (None, begin)
+    space, consumed = parse_space(line, consumed)
+    if line[consumed] != "]":
+        return (None, begin)
+    consumed += 1
+    return (date, consumed)
