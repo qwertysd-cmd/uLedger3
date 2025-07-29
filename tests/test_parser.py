@@ -112,3 +112,48 @@ class TestParser(unittest.TestCase):
         x = parser.parse_simple_amount("$ 1,256.239")
         self.assertEqual(x, ((parser.Amount(Decimal('1256.239'), "$"),
                               parser.CommodityFormat(True, 3, "left", True)), 11))
+
+    def test_parse_lot_price(self):
+        x = parser.parse_lot_price("{eur 256.239}")
+        self.assertEqual(x, ((parser.Amount(Decimal('256.239'), "eur"),
+                              parser.CommodityFormat(False, 3, "left", True)), 13))
+        x = parser.parse_lot_price("a{eur 256.239 abc}", 1)
+        self.assertEqual(x, (None, 1))
+        x = parser.parse_lot_price("{eur }256.239}")
+        self.assertEqual(x, (None, 0))
+        x = parser.parse_lot_price("{$1,256.239  }")
+        self.assertEqual(x, ((parser.Amount(Decimal('1256.239'), "$"),
+                              parser.CommodityFormat(True, 3, "left", False)), 14))
+
+    def test_parse_lot_date_and_price(self):
+        x = parser.parse_lot_date_and_price("{eur 256.239} [2022/01/02]")
+        self.assertEqual(x, ((datetime(2022, 1, 2),
+                              parser.Amount(Decimal('256.239'), "eur"),
+                              parser.CommodityFormat(False, 3, "left", True)), 26))
+        x = parser.parse_lot_date_and_price("  [2022/01/02] {eur 256.239}", 2)
+        self.assertEqual(x, ((datetime(2022, 1, 2),
+                              parser.Amount(Decimal('256.239'), "eur"),
+                              parser.CommodityFormat(False, 3, "left", True)), 28))
+        x = parser.parse_lot_date_and_price("[2022/01/02] h {eur 256.239}")
+        self.assertEqual(x, (None, 0))
+
+    def test_parse_comment(self):
+        x = parser.parse_comment("  ; {eur 256.239} [2022/01/02]")
+        self.assertEqual(x, (None, 0))
+        x = parser.parse_comment("  ; {eur 256.239} [2022/01/02]", 2)
+        self.assertEqual(x, ("; {eur 256.239} [2022/01/02]", 30))
+
+    def test_parser_update_inferred_commodity_format(self):
+        # ["comma", "precision", "position", "space"])
+        x = parser.CommodityFormat( True, 3,  "left", True)
+        y = parser.CommodityFormat(False, 4, "right", False)
+        z = parser.CommodityFormat( True, 5,  "left", True)
+        l = parser.Parser("test")
+        l._update_inferred_commodity_format("c1", x)
+        l._update_inferred_commodity_format("c2", y)
+        l._update_inferred_commodity_format("c1", y)
+        l._update_inferred_commodity_format("c2", x)
+        a = parser.CommodityFormat( True, 4,  "left", True)
+        b = parser.CommodityFormat( True, 4, "right", False)
+        self.assertEqual(l.ledger.get_commodity_format("c1"), a)
+        self.assertEqual(l.ledger.get_commodity_format("c2"), b)

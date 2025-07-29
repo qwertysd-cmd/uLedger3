@@ -4,6 +4,8 @@ from datetime import datetime
 import re
 from decimal import Decimal
 
+CommodityFormat = namedtuple("CommodityFormat",
+                             ["comma", "precision", "position", "space"])
 class Ledger():
     def __init__(self, name: str):
         self.name = name
@@ -12,6 +14,16 @@ class Ledger():
                             CommodityDecl |
                             PriceDecl |
                             Transaction] = []
+        self.declared_commodities: set[str] = set()
+        self.declared_accounts: set[str] = set()
+        self.declared_commodity_formats: dict[str, CommodityFormat] = {}
+        self.inferred_commodity_formats: dict[str, CommodityFormat] = {}
+    def get_commodity_format(self, commodity: str) -> CommodityFormat | None:
+        if commodity in self.declared_commodity_formats:
+            return self.declared_commodity_formats[commodity]
+        if commodity in self.inferred_commodity_formats:
+            return self.inferred_commodity_formats[commodity]
+        return None
 
 Position = namedtuple("Position", ["line", "column"])
 Span = namedtuple("Span", ["start", "end"])
@@ -25,9 +37,6 @@ class AccountDecl(Entity):
 
 class CommodityDecl(Entity):
     pass
-
-CommodityFormat = namedtuple("CommodityFormat",
-                             ["comma", "precision", "position", "space"])
 
 class PriceDecl(Entity):
     pass
@@ -179,3 +188,74 @@ def parse_lot_date(line: str, begin: int = 0) -> tuple[datetime | None, int]:
         return (None, begin)
     consumed += 1
     return (date, consumed)
+
+def parse_lot_price(line: str, begin: int = 0) \
+    -> tuple[tuple[Amount, CommodityFormat] | None, int]:
+    if len(line) <= begin:
+        return (None, len(line))
+    if line[begin] != "{":
+        return (None, begin)
+    consumed = begin + 1
+    space, consumed = parse_space(line, consumed)
+    amount, consumed = parse_simple_amount(line, consumed)
+    if (amount is None) or (len(line) <= consumed):
+        return (None, begin)
+    space, consumed = parse_space(line, consumed)
+    if line[consumed] != "}":
+        return (None, begin)
+    consumed += 1
+    return (amount, consumed)
+
+def parse_lot_date_and_price(line: str, begin: int = 0) \
+    -> tuple[tuple[datetime, Amount, CommodityFormat] | None, int]:
+    if len(line) <= begin:
+        return (None, len(line))
+    lot_price, consumed = parse_lot_price(line, begin)
+    if lot_price:
+        # [lot_price] [lot_date]
+        space, consumed = parse_space(line, consumed)
+        lot_date, consumed = parse_lot_date(line, consumed)
+        if not lot_date:
+            return (None, begin)
+        lot_price, commodity_format = lot_price
+        return ((lot_date, lot_price, commodity_format), consumed)
+    else:
+        # [lot_date] [lot_price]
+        lot_date, consumed = parse_lot_date(line, begin)
+        if not lot_date:
+            return (None, begin)
+        space, consumed = parse_space(line, consumed)
+        lot_price, consumed = parse_lot_price(line, consumed)
+        if not lot_price:
+            return (None, begin)
+        lot_price, commodity_format = lot_price
+        return ((lot_date, lot_price, commodity_format), consumed)
+
+def parse_comment(line: str, begin: int = 0) \
+    -> tuple[str | None, int]:
+    if len(line) <= begin:
+        return (None, len(line))
+    if line[begin] == ";":
+        return (line[begin:], len(line))
+    else:
+        return (None, begin)
+
+class Parser():
+    def __init__(self, name: str):
+        self.ledger = Ledger(name)
+
+    def _parse_amount(self, line: str, begin: int = 0):
+        pass
+
+    def _update_inferred_commodity_format(
+            self, commodity: str, new_format: CommodityFormat) -> None:
+        if commodity in self.ledger.inferred_commodity_formats:
+            old_format = self.ledger.inferred_commodity_formats[commodity]
+            comma = old_format.comma or new_format.comma
+            precision = max(old_format.precision, new_format.precision)
+            position = old_format.position
+            space = old_format.space
+            self.ledger.inferred_commodity_formats[commodity] = \
+                CommodityFormat(comma, precision, position, space)
+        else:
+            self.ledger.inferred_commodity_formats[commodity] = new_format
