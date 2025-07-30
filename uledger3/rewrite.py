@@ -140,12 +140,12 @@ def expand_and_apply_unit_rate(txn, account, format_function):
             amount = Amount(
                 -p.amount.quantity,
                 Lot(p.amount.commodity, txn.date, p.amount.unit_rate))
-            contents.append(Posting(equity_n, post_amount))
+            contents.append(Posting(equity_n, amount))
             equity += amount
             amount = Amount(
                 p.amount.quantity * p.amount.unit_rate.quantity,
                 p.amount.unit_rate.commodity)
-            contents.append(Posting(equity_n, post_amount))
+            contents.append(Posting(equity_n, amount))
             equity += amount
             continue
         ### Selling ###
@@ -197,9 +197,9 @@ def expand_and_apply_unit_rate(txn, account, format_function):
         proceeds = sold * p.amount.unit_rate.quantity
         cost = equity_balance
         profit = proceeds - equity_balance
-        post_amount = Amount(profit, p.amount.unit_rate.commodity)
-        contents.append(Posting(gains_n, post_amount))
-        gains += post_amount
+        amount = Amount(profit, p.amount.unit_rate.commodity)
+        contents.append(Posting(gains_n, amount))
+        gains += amount
     txn.contents = contents
     return prices
 

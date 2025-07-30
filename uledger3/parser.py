@@ -160,13 +160,15 @@ def parse_quantity(line: str, begin: int = 0) \
     return ((Decimal(m.group(0).replace(',', '')), comma, precision),
             begin + m.end())
 
-def parse_commodity(line: str, begin: int = 0) \
+def parse_commodity(line: str, begin: int = 0, relaxed=False) \
     -> tuple[str | None, int]:
     if len(line) <= begin:
         return (None, len(line))
     line = line[begin:]
     quoted = '["\']([^"\']+)["\']'
     unquoted = '[^\s@0-9-"\'&]+'
+    if relaxed:
+        unquoted = '[^\s@"\']+'
     m = re.match(quoted, line)
     if m:
         return (m.group(1), begin + m.end())
@@ -469,16 +471,17 @@ class Parser():
         date, consumed = parse_date(line, consumed)
         space, consumed = self._parse_space_or_error(
             "Price declaration not well formed.", line, consumed)
-        commodity, consumed = parse_commodity(line, consumed)
+        commodity, consumed = parse_commodity(line, consumed, relaxed=True)
         price = None
         if commodity:
             space, consumed = parse_space(line, consumed)
             price, consumed = parse_simple_amount(line, consumed)
         if (not price) or (not commodity) or (consumed < len(line)):
             raise ParseError(
-                "Account declaration not well formed",
+                "Price declaration not well formed",
                 Position(self._current_line_number, consumed), line)
-        price, _ = price
+        price, fmt = price
+        self._update_inferred_commodity_format(price.commodity, fmt)
         return PriceDecl(commodity, date, price)
 
     def _finish_parse_transaction_start(self, line: str, begin: int = 0) \

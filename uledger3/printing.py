@@ -72,7 +72,8 @@ def _is_representable_by_precision(amount: Amount, precision: int):
     if amount.quantity == x:
         return True
 
-def amount2str(amount: Amount, format_function, noquote: bool = False) \
+def amount2str(amount: Amount, format_function,
+               force_prec: bool = False, noquote: bool = False) \
     -> tuple[str, str]:
     assert isinstance(amount.quantity, Decimal)
     if isinstance(amount.commodity, str):
@@ -81,7 +82,7 @@ def amount2str(amount: Amount, format_function, noquote: bool = False) \
         assert isinstance(amount.commodity, Lot)
         commodity = amount.commodity.commodity
     fmt = format_function(commodity)
-    if _is_representable_by_precision(amount, fmt.precision):
+    if force_prec or _is_representable_by_precision(amount, fmt.precision):
         precision = fmt.precision
     else:
         precision = -amount.quantity.as_tuple().exponent
@@ -143,6 +144,7 @@ def print_account_balance(account: Account, format_function: Callable,
                 qty = account[child].balance[commodity]
                 a, b = amount2str(Amount(qty, commodity),
                                   format_function,
+                                  force_prec=True,
                                   noquote=True)
                 amount = (a + b).rjust(padding)
                 if i == last_i:
@@ -162,6 +164,7 @@ def print_account_balance(account: Account, format_function: Callable,
             qty = account.balance[commodity]
             a, b = amount2str(Amount(qty, commodity),
                               format_function,
+                              force_prec=True,
                               noquote=True)
             print((a + b).rjust(padding))
         if not commodities:

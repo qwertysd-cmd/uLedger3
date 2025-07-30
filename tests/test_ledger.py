@@ -165,7 +165,6 @@ class TestParser(unittest.TestCase):
         self.assertEqual(x, y)
         self.assertEqual(y, z)
         self.assertNotEqual(y, a)
-        print(a.children)
 
     def test_read_uledger_comment(self):
         x = "; [uledger] abc -- 123"

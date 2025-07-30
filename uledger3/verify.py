@@ -83,7 +83,7 @@ def _verify_balance_within_tolerance(account, txn, lines):
     if account.balance == 0:
         return None
     x = account.sorted_commodities()
-    if len(x) == 1 and account.balance[x[0]] < Decimal('0.01'):
+    if len(x) == 1 and abs(account.balance[x[0]]) < Decimal('0.01'):
         return None
     raise ledger.BalanceError(
         f"{account.full_name()} unbalanced by {account.balance}.", txn, lines)
