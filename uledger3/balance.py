@@ -78,7 +78,7 @@ def main():
             prices, _ = read_journal(args.prices)
             prices = prices.contents
         exchange = Exchange()
-        for i in (journal.contents, prices):
+        for i in (prices, journal.contents):
             for price in i:
                 if not isinstance(price, PriceDecl):
                     continue

@@ -389,6 +389,8 @@ class Parser():
                                  Position(self._current_line_number, consumed),
                                  line)
             amount_2, cmdty_fmt = amount_2
+            if not amount_2.commodity and self.journal.default_commodity:
+                amount_2 = Amount(amount_2.quantity, self.journal.default_commodity)
             amount_2.span = self._create_span(consumed_x, consumed - 1)
             self._pedantic_check_commodity(amount_2.commodity, line, consumed_x)
             self._update_inferred_commodity_format(amount_2.commodity, cmdty_fmt)
