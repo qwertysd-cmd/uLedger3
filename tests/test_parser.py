@@ -252,8 +252,9 @@ class TestParser(unittest.TestCase):
         self.assertEqual(x, "abc def  ghi")
         with self.assertRaises(parser.ParseError):
             x = l._finish_parse_commodity_decl_contents("  format$123.45")
-        with self.assertRaises(parser.ParseError):
-            x = l._finish_parse_commodity_decl_contents("  format 123.45")
+        x = l._finish_parse_commodity_decl_contents("  format 123.45")
+        b = parser.CommodityFormat(False, 2, "right", False)
+        self.assertEqual(x, b)
 
     def test_parser_finish_parse_transaction_contents(self):
         l = parser.Parser("test")

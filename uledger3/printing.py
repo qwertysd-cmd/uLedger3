@@ -67,6 +67,11 @@ def commodity2str(commodity: str) -> str:
 def date2str(date: datetime) -> str:
     return date.strftime('%Y/%m/%d')
 
+def _is_representable_by_precision(amount: Amount, precision: int):
+    x = amount.quantity.quantize(Decimal(10) ** -precision)
+    if amount.quantity == x:
+        return True
+
 def amount2str(amount: Amount, format_function, noquote: bool = False) \
     -> tuple[str, str]:
     assert isinstance(amount.quantity, Decimal)
@@ -76,8 +81,10 @@ def amount2str(amount: Amount, format_function, noquote: bool = False) \
         assert isinstance(amount.commodity, Lot)
         commodity = amount.commodity.commodity
     fmt = format_function(commodity)
-    precision = max(-amount.quantity.as_tuple().exponent,
-                    fmt.precision)
+    if _is_representable_by_precision(amount, fmt.precision):
+        precision = fmt.precision
+    else:
+        precision = -amount.quantity.as_tuple().exponent
     sep = "," if fmt.comma else ""
 
     left = ""

@@ -8,7 +8,7 @@ import uledger3.ledger as ledger
 from uledger3.util import read_journal, apply_transaction
 from uledger3.parser import Amount, Lot, Transaction, \
     Posting, Position, Journal, Entity, PriceDecl, \
-    AccountDecl, CommodityDecl, CommodityFormat
+    AccountDecl, CommodityDecl, CommodityFormat, AccountAlias
 from uledger3.printing import amount2str, date2str, \
     commodity2str
 from uledger3.ledger import Account, BalanceError, \
@@ -25,7 +25,10 @@ def print_account_decl(d):
     indent = "  "
     print("account " + d.account)
     for i in d.contents:
-        print(indent + i)
+        if isinstance(i, AccountAlias):
+            print(indent + "alias " + i.alias)
+        else:
+            print(indent + i)
 
 def print_commodity_decl(d, format_function):
     indent = "  "
@@ -70,17 +73,6 @@ def print_transaction(txn, format_function):
             print(line)
             continue
 
-        # Convert to preferred precision if possible.
-        if isinstance(amount.commodity, str):
-            preferred = format_function(amount.commodity)
-            preferred = preferred.precision
-        else:
-            preferred = format_function(amount.commodity.commodity)
-            preferred = preferred.precision
-        x = amount.quantity.quantize(Decimal(10) ** -preferred)
-        if amount.quantity == x:
-            amount = Amount(x, p.amount.commodity, p.amount.unit_rate)
-
         left, right = amount2str(amount, format_function)
         left = hard_space + left
         line += left.rjust(alignment_column - len(line))
@@ -114,21 +106,19 @@ def main():
                 for i in p:
                     print_price_decl(i, journal.get_commodity_format)
             else:
-                print_transaction(item, journal.get_commodity_format)
                 apply_transaction(item, root, real=True, lots=True)
+                print_transaction(item, journal.get_commodity_format)
 
 def expand_and_apply_unit_rate(txn, account, format_function):
     # Return list of price statements
     prices = []
-    new_postings = []
-    delete_postings = []
-    equity = "Equity:Trading:Securities"
-    gains = "Income:Capital Gains"
-    index = 0
-    dindex = 0
+    contents = []
+    equity_n = "Equity:Trading:Securities"
+    equity = account[equity_n]
+    gains_n = "Income:Capital Gains"
+    gains = account[gains_n]
     for p in txn.contents:
-        index += 1
-        dindex += 1
+        contents.append(p)
         if not isinstance(p, Posting):
             continue
         if parser.is_virtual_account(p.account):
@@ -136,91 +126,71 @@ def expand_and_apply_unit_rate(txn, account, format_function):
         if not p.amount.unit_rate:
             account[p.account] += p.amount
             continue
-        dindex -= 1
-        delete_postings.append(dindex)
+        contents.pop()
+        assets = account[p.account]
+        price = PriceDecl(p.amount.commodity, txn.date, p.amount.unit_rate)
+        prices.append(price)
         ### Buying ###
         if p.amount.quantity >= 0:
-            post_amount = Amount(
+            amount = Amount(
                 p.amount.quantity,
                 Lot(p.amount.commodity, txn.date, p.amount.unit_rate))
-            x = parser.Posting(p.account, post_amount)
-            new_postings.append((index, x))
-            index += 1; dindex += 1
-            account[p.account] += post_amount
-            post_amount = Amount(
+            contents.append(Posting(p.account, amount))
+            assets += amount
+            amount = Amount(
                 -p.amount.quantity,
                 Lot(p.amount.commodity, txn.date, p.amount.unit_rate))
-            x = parser.Posting(equity, post_amount)
-            new_postings.append((index, x))
-            index += 1; dindex += 1
-            prices.append(PriceDecl(
-                p.amount.commodity, txn.date, p.amount.unit_rate))
-            account[equity] += post_amount
-            post_amount = Amount(
+            contents.append(Posting(equity_n, post_amount))
+            equity += amount
+            amount = Amount(
                 p.amount.quantity * p.amount.unit_rate.quantity,
                 p.amount.unit_rate.commodity)
-            x = parser.Posting(equity, post_amount)
-            new_postings.append((index, x))
-            index += 1; dindex += 1
-            account[equity] += post_amount
+            contents.append(Posting(equity_n, post_amount))
+            equity += amount
             continue
         ### Selling ###
         commodity = p.amount.commodity
         remaining_balance = -p.amount.quantity
-        equity_balance = 0
         assert remaining_balance > 0
-        new_postings.append((index, f"; Before this sale:"))
-        index += 1; dindex += 1
+        equity_balance = 0
+        contents.append(f"; Before this sale:")
         x = _get_sorted_positive_lots(
-            commodity, p.amount.unit_rate.commodity, account[p.account])
+            commodity, p.amount.unit_rate.commodity, assets)
         for lot in x:
             a, b = amount2str(Amount(account[p.account].balance[lot], lot),
                               format_function)
-            new_postings.append((index, f";   {a}{b} ; {p.account}"))
-            index += 1; dindex += 1
+            contents.append(f";   {a}{b} ; {p.account}")
         a, b = amount2str(Amount(remaining_balance, commodity),
                           format_function)
         c, d = amount2str(p.amount.unit_rate, format_function)
-        new_postings.append((index, f"; Selling {a}{b} @ {c}{d}."))
-        index += 1; dindex += 1
-        prices.append(
-            PriceDecl(p.amount.commodity, txn.date, p.amount.unit_rate))
+        contents.append(f"; Selling {a}{b} @ {c}{d} each.")
         while remaining_balance > 0:
             x = _get_sorted_positive_lots(
                 commodity, p.amount.unit_rate.commodity, account[p.account])
-            if not x: break
+            if not x:
+                break
             selected = x[0]
             min_bal = min(remaining_balance,
                           account[p.account].balance[selected])
             remaining_balance -= min_bal
-            post_amount = Amount(-min_bal, selected)
-            x = parser.Posting(p.account, post_amount)
-            new_postings.append((index, x))
-            index += 1; dindex += 1
-            account[p.account] += post_amount
-            post_amount = Amount(min_bal, selected)
-            x = parser.Posting(equity, post_amount)
-            new_postings.append((index, x))
-            index += 1; dindex += 1
-            account[equity] += post_amount
+            amount = Amount(-min_bal, selected)
+            contents.append(Posting(p.account, amount))
+            assets += amount
+            amount = Amount(min_bal, selected)
+            contents.append(Posting(equity_n, amount))
+            equity += amount
             equity_balance -= min_bal * selected.price.quantity
         if remaining_balance != 0:
             sold = -p.amount.quantity - remaining_balance
             a, b = amount2str(Amount(sold, commodity),
                               format_function)
-            new_postings.append(
-                (index, f"; WARNING: Sold only {a}{b}."))
-            index += 1; dindex += 1
+            contents.append(f"; WARNING: Sold only {a}{b}.")
             a, b = amount2str(Amount(remaining_balance, commodity),
                               format_function)
-            new_postings.append(
-                (index, f"; WARNING: Unsold balance is {a}{b}."))
-            index += 1; dindex += 1
-        post_amount = Amount(equity_balance, p.amount.unit_rate.commodity)
-        x = parser.Posting(equity, post_amount)
-        new_postings.append((index, x))
-        index += 1; dindex += 1
-        account[equity] += post_amount
+            contents.append(f"; WARNING: Unsold balance is {a}{b}.")
+        amount = Amount(equity_balance, p.amount.unit_rate.commodity)
+        contents.append(Posting(equity_n, amount))
+        equity += amount
         # `quantity` is negative and `remaining_balance` is positive.
         # sold, proceeds, cost, profit are normally negative.
         sold = p.amount.quantity + remaining_balance
@@ -228,15 +198,9 @@ def expand_and_apply_unit_rate(txn, account, format_function):
         cost = equity_balance
         profit = proceeds - equity_balance
         post_amount = Amount(profit, p.amount.unit_rate.commodity)
-        x = parser.Posting(gains, post_amount)
-        new_postings.append((index, x))
-        index += 1; dindex += 1
-        account[gains] += post_amount
-
-    for p in new_postings:
-        txn.contents.insert(p[0], p[1])
-    for i in delete_postings:
-        txn.contents.pop(i)
+        contents.append(Posting(gains_n, post_amount))
+        gains += post_amount
+    txn.contents = contents
     return prices
 
 def _get_sorted_positive_lots(commodity, price_commodity, account):

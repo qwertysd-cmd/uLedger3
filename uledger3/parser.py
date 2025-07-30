@@ -11,6 +11,9 @@ class CommodityFormat(NamedTuple):
     position: str
     space: bool
 
+class AccountAlias(NamedTuple):
+    alias: str
+
 class ParseError(Exception):
     def __init__(self, message: str,
                  position: Union["Position", None] = None,
@@ -37,6 +40,8 @@ class Journal():
                             CommodityDecl |
                             PriceDecl |
                             Transaction] = []
+        self.default_commodity: str = None
+        self.account_aliases: dict[str, str] = {}
         self.declared_commodities: set[str] = set()
         self.declared_accounts: set[str] = set()
         self.declared_commodity_formats: dict[str, CommodityFormat] = {}
@@ -64,7 +69,7 @@ class AccountDecl(Entity):
     def __init__(self, account: str):
         super().__init__()
         self.account = account
-        self.contents: list[str] = []
+        self.contents: list[AccountAlias | str] = []
 
 class CommodityDecl(Entity):
     def __init__(self, commodity: str):
@@ -238,8 +243,6 @@ def parse_simple_amount(line: str, begin: int = 0) \
         quantity, comma, precision = quantity
         space, consumed = parse_space(line, consumed)
         commodity, consumed = parse_commodity(line, consumed)
-        if not commodity:
-            return (None, begin)
         amount = Amount(quantity, commodity)
         return ((amount,
                  CommodityFormat(comma, precision, "right", bool(space))),
@@ -366,6 +369,8 @@ class Parser():
         if not amount_1:
             return (None, begin)
         amount_1, cmdty_fmt = amount_1
+        if not amount_1.commodity and self.journal.default_commodity:
+            amount_1 = Amount(amount_1.quantity, self.journal.default_commodity)
         self._pedantic_check_commodity(amount_1.commodity, line, begin)
         amount_1.span = self._create_span(begin, consumed - 1)
         self._update_inferred_commodity_format(amount_1.commodity, cmdty_fmt)
@@ -499,6 +504,7 @@ class Parser():
         space, consumed = self._parse_space_or_error(
             "Expected indentation.", line, begin)
         fmt, consumed = parse_keyword("format", line, consumed)
+        default, consumed = parse_keyword("default", line, consumed)
         if fmt:
             space, consumed = self._parse_space_or_error(
                 "Format statement not well formed.", line, consumed)
@@ -510,6 +516,8 @@ class Parser():
                     "Format statement not well formed",
                     Position(self._current_line_number, consumed), line)
             return fmt[1]
+        elif default:
+            return "default"
         else:
             # rstripped line definitely has some more content.
             assert len(line) > consumed
@@ -519,10 +527,17 @@ class Parser():
         -> str:
         line = line.rstrip()
         space, consumed = self._parse_space_or_error(
-            "Expected indentation.", line, consumed)
-        # rstripped line definitely has some more content.
-        assert len(line) > consumed
-        return line[consumed:]
+            "Expected indentation.", line, begin)
+        alias, consumed = parse_keyword("alias", line, consumed)
+        if alias:
+            space, consumed = self._parse_space_or_error(
+                "Format statement not well formed.", line, consumed)
+            account, consumed = parse_account_name(line, consumed)
+            return AccountAlias(account)
+        else:
+            # rstripped line definitely has some more content.
+            assert len(line) > consumed
+            return line[consumed:]
 
     def _finish_parse_transaction_contents(self, line: str, begin: int = 0) \
         -> str | Posting:
@@ -539,6 +554,13 @@ class Parser():
             raise ParseError(
                 "Posting (account) not well formed",
                 Position(self._current_line_number, consumed), line)
+        if is_virtual_account(account):
+            x = strip_virtual_account(account)
+            if x in self.journal.account_aliases:
+                y = self.journal.account_aliases[x]
+                account = account[0] + y + account[-1]
+        elif account in self.journal.account_aliases:
+            account = self.journal.account_aliases[account]
         self._pedantic_check_account(account, line, consumed_x)
         consumed_x = consumed
         space, consumed = parse_space(line, consumed)
@@ -606,10 +628,14 @@ class Parser():
                 y = self._finish_parse_commodity_decl_contents(line)
                 if isinstance(y, CommodityFormat):
                     self.journal.declared_commodity_formats[x.commodity] = y
+                elif y == "default":
+                    self.journal.default_commodity = x.commodity
                 x.contents.append(y)
                 x.span = Span(x.span.start, line_end)
             elif isinstance(x, AccountDecl):
                 y = self._finish_parse_account_decl_contents(line)
+                if isinstance(y, AccountAlias):
+                    self.journal.account_aliases[y.alias] = x.account
                 x.contents.append(y)
                 x.span = Span(x.span.start, line_end)
             elif isinstance(x, Transaction):
