@@ -1,5 +1,6 @@
 from typing import Union
 from decimal import Decimal
+import re
 
 from uledger3 import parser
 from uledger3.parser import Amount, Lot, Transaction, \
@@ -86,10 +87,27 @@ def check_transaction(txn: Transaction, lines: list[str] | None = None,
         if isinstance(p, Posting):
             if p.amount is None or parser.is_virtual_account(p.account):
                 continue
-            a.apply(p)
+            a[p.account] += p.amount
     if a.balance != 0:
         raise BalanceError(
             f"Transaction unbalanced by {a.balance}.", txn, lines)
+
+def read_uledger_comment(comment: str) -> tuple[str, str] | None:
+    m = re.match(";\s*\[uledger\]", comment)
+    if not m:
+        return None
+    comment = comment[m.end():]
+    x = comment.split("--")
+    if len(x) != 2:
+        return None
+    return (x[0].strip(), x[1].strip())
+
+def lexorder_commodity(cmdty: str | Lot) -> str:
+    if isinstance(cmdty, str):
+        return cmdty
+    else:
+        from uledger3.printing import date2str
+        return f"{cmdty.commodity} {date2str(cmdty.date)}"
 
 def unelide_transaction(txn: Transaction, lines: list[str] | None = None) \
     -> None:
@@ -103,8 +121,10 @@ def unelide_transaction(txn: Transaction, lines: list[str] | None = None) \
             if isinstance(p, Posting):
                 if p.amount is None or parser.is_virtual_account(p.account):
                     continue
-                a.apply(p)
-        for i in a.balance:
+                a[p.account] += p.amount
+        for i in a.sorted_commodities():
+            if a.balance[i] == 0:
+                continue
             txn.contents.insert(
                 elide_index + 1,
                 parser.Posting(
@@ -139,6 +159,8 @@ class Balance(dict):
     def __iadd__(self, amount: Amount):
         if not isinstance(amount, Amount):
             raise TypeError(f"Unsupported type {type(amount)} for addition.")
+        if amount.unit_rate:
+            raise LedgerError("Unit rate cannot be applied.", amount)
         if amount.commodity not in self:
             self[amount.commodity] = amount.quantity
         else:
@@ -150,6 +172,8 @@ class Balance(dict):
     def __isub__(self, amount: Amount):
         if not isinstance(amount, Amount):
             raise TypeError(f"Unsupported type {type(amount)} for subtraction.")
+        if amount.unit_rate:
+            raise LedgerError("Unit rate cannot be applied.", amount)
         if amount.commodity not in self:
             self[amount.commodity] = -amount.quantity
         else:
@@ -206,9 +230,7 @@ class Account():
     def apply(self, posting: Posting):
         account = parser.strip_virtual_account(posting.account)
         amount = posting.amount
-        if amount.unit_rate:
-            raise LedgerError("Unit rate cannot be applied.", amount)
-        self[account]._balance += amount
+        self[account] += amount
     def __iadd__(self, amount: Amount):
         self._balance += amount
         return self
@@ -217,3 +239,16 @@ class Account():
         return self
     def __str__(self):
         return f"Account({self.name}, balance={self.balance})"
+    def sorted_commodities(self):
+        b = list(self.balance.keys())
+        b.sort(key=lexorder_commodity)
+        return b
+    def sorted_children(self):
+        b = list(self.children.keys())
+        b.sort()
+        return b
+    def full_name(self):
+        x = self.parent
+        if x:
+            return x.full_name() + ":" + self.name
+        return self.name

@@ -166,3 +166,17 @@ class TestParser(unittest.TestCase):
         self.assertEqual(y, z)
         self.assertNotEqual(y, a)
         print(a.children)
+
+    def test_read_uledger_comment(self):
+        x = "; [uledger] abc -- 123"
+        self.assertEqual(ledger.read_uledger_comment(x),
+                         ("abc", "123"))
+        x = "; [uledger] abc--123"
+        self.assertEqual(ledger.read_uledger_comment(x),
+                         ("abc", "123"))
+        x = "; [uledger] abc-123"
+        self.assertEqual(ledger.read_uledger_comment(x),
+                         None)
+        x = "; jsdla abc--123"
+        self.assertEqual(ledger.read_uledger_comment(x),
+                         None)
