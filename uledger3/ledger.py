@@ -250,10 +250,10 @@ class Account():
         b = list(self.balance.keys())
         b.sort(key=lexorder_commodity)
         return b
-    def sorted_children(self):
-        b = list(self.children.keys())
-        b.sort()
-        return b
+    def sorted_children(self, key=lambda x: x.name):
+        b = list(self.children.values())
+        b.sort(key=key)
+        return [x.name for x in b]
     def full_name(self):
         x = self.parent
         if x:

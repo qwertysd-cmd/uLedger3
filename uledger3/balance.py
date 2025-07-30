@@ -4,7 +4,8 @@ import argparse
 from typing import Callable
 from decimal import Decimal
 
-from uledger3.printing import print_account_balance
+from uledger3.printing import print_account_balance, \
+    print_account_tree
 from uledger3.ledger import Account, Balance
 from uledger3.util import read_journal, apply_journal
 from uledger3.exchange import Exchange
@@ -29,6 +30,12 @@ def parse_args():
     argparser.add_argument("--prices", type=str,
                            default="",
                            help="prices file")
+    argparser.add_argument("--tree", action="store_true",
+                           default=False,
+                           help="Display a tree")
+    argparser.add_argument("--account", type=str,
+                           default="",
+                           help="Account to display")
     return argparser.parse_args()
 
 def exchanger(exchange: Exchange, commodity: str, b: Balance) -> Balance:
@@ -44,10 +51,14 @@ def exchanger(exchange: Exchange, commodity: str, b: Balance) -> Balance:
                     Lot(i.commodity, i.date,
                         Amount(i.price.quantity * x, commodity))
                 )
+            else:
+                b_new += Amount(b[i], i)
         else:
             x = exchange.get_price(None, i, commodity)
             if x:
                 b_new += Amount(b[i] * x, commodity)
+            else:
+                b_new += Amount(b[i], i)
     return b_new
 
 def quantizer(format_function: Callable, b: Balance) -> Balance:
@@ -97,7 +108,14 @@ def main():
                       lambda b, n : quantizer(journal.get_commodity_format, b),
                       independent = True)
 
-    print_account_balance(quantized, format_function=journal.get_commodity_format)
+    if args.account:
+        quantized = quantized[args.account]
+
+    if args.exchange and args.tree:
+        print_account_tree(quantized, format_function=journal.get_commodity_format,
+                           commodity=args.exchange)
+    else:
+        print_account_balance(quantized, format_function=journal.get_commodity_format)
 
 if __name__ == "__main__":
     main()

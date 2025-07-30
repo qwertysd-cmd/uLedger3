@@ -1,6 +1,6 @@
 from decimal import Decimal
 from datetime import datetime
-from typing import Callable
+from typing import Callable, List
 
 import uledger3.parser as parser
 from uledger3.parser import Amount, Lot, Transaction, \
@@ -177,3 +177,96 @@ def _account_is_deep_empty(account: Account) -> bool:
         if not _account_is_deep_empty(account[c]):
             return False
     return True
+
+def _first_child(account: Account) -> str:
+    for c in account.children:
+        return c
+
+def _count_nonzero_children(account: Account) -> int:
+    count = 0
+    for child in account.children:
+        if _account_is_deep_empty(account[child]): continue
+        count += 1
+    return count
+
+def _print_tree_balance(padding: int, account: Account, cmdty: str, separator: str,
+                        ffunc: Callable, parents: List[float], chars: List[str],
+                        prefix: str):
+    commodities = [cmdty] + \
+        [x for x in account.sorted_commodities() if x != cmdty]
+    first = True
+    prefixlen = 0
+    for commodity in commodities:
+        qty = account.balance[commodity]
+        a, b = amount2str(Amount(qty, commodity),
+                          ffunc,
+                          force_prec=True,
+                          noquote=True)
+        amount = (a + b).rjust(padding)
+        if not (chars and parents):
+            if first:
+                print(f"{amount} {account.name}")
+            else:
+                line = amount + separator
+                if _count_nonzero_children(account):
+                    line += f"{' ' * 7} │ "
+                prefixlen = len(line)
+                print(line.rstrip())
+        else:
+            if first:
+                line = amount + separator
+                for i in range(len(parents)):
+                    perc = 100 * float(qty)/parents[i]
+                    line += f"{perc:6.2f}% {chars[i]} "
+                line += prefix
+                prefixlen = len(line)
+                line += account.name
+                print(line)
+            else:
+                line = amount + separator
+                for i in range(len(parents)):
+                    line += f"{' ' * 7} │ "
+                if _count_nonzero_children(account):
+                    line += f"{' ' * 7} │ "
+                prefixlen = len(line)
+                print(line.rstrip())
+        first = False
+
+def print_account_tree(account: Account, format_function: Callable,
+                       padding: int = 20, separator: str = "  ",
+                       chars: List[str] = None,
+                       prefix: str = "", root=True, commodity: str = "USD",
+                       parents: List[float] = None):
+    qty = account.balance[commodity]
+    if root:
+        parents = []
+        chars = []
+    _print_tree_balance(padding, account, commodity, separator,
+                        format_function, parents, chars, prefix)
+    if chars:
+        if chars[-1] == "┗━":
+            chars[-1] = " "
+        else:
+            chars[-1] = "│"
+    child_number = _count_nonzero_children(account)
+    for child in account.sorted_children(lambda x: -x.balance[commodity]):
+        if _account_is_deep_empty(account[child]): continue
+        child_number -= 1
+        last_child = child_number == 0
+        if last_child:
+            new_char = "┗━"
+        else:
+            new_char = "┣━"
+        p = ""
+        combined_child = account[child]
+        while _is_empty_parent(combined_child):
+            p += combined_child.name + ":"
+            combined_child = combined_child[_first_child(combined_child)]
+        print_account_tree(combined_child,
+                           format_function,
+                           padding=padding,
+                           chars=chars + [new_char],
+                           prefix=p,
+                           root=False,
+                           commodity=commodity,
+                           parents=parents + [float(qty)])
