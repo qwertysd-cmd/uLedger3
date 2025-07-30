@@ -25,6 +25,9 @@ def _search_date(pricelist: list[PriceEntry_t], date: datetime) \
     if not len(pricelist):
         return None
 
+    if not date:
+        return pricelist[-1]
+
     low = 0
     high = len(pricelist) - 1
 
@@ -72,7 +75,7 @@ class CommodityNode():
     def _sort(self, commodity):
         if self._sorted[commodity]: return
         # Sort in ascending order of dates.
-        self._adjacent.commodity.sort(key=lambda x: x[0])
+        self._adjacent[commodity].sort(key=lambda x: x[0])
         self._sorted[commodity] = True
 
     def get_price(self, date: datetime, commodity: str) -> PriceEntry_t | None:

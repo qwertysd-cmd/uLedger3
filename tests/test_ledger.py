@@ -166,6 +166,18 @@ class TestParser(unittest.TestCase):
         self.assertEqual(y, z)
         self.assertNotEqual(y, a)
 
+        a.apply(Posting("A:B:C", Amount(Decimal("6"), "JPY")))
+        a.apply(Posting("A:B:D", Amount(Decimal("7"), "JPY")))
+        a.apply(Posting("A:B", Amount(Decimal("13"), "JPY")))
+        a.apply(Posting("A:B", Amount(Decimal("12"), "ABC")))
+        a.apply(Posting("A:B:X", Amount(Decimal("-12"), "ABC")))
+        self.assertEqual(a["A"].balance["ABC"], 0)
+        self.assertEqual(a["A:B"].balance["ABC"], 0)
+        x = a["A:B"].balance_excluding_children()
+        self.assertEqual(x["ABC"], Decimal("12"))
+        x = a["A:B"].balance_excluding_children()
+        self.assertEqual(x["JPY"], Decimal("13"))
+
     def test_read_uledger_comment(self):
         x = "; [uledger] abc -- 123"
         self.assertEqual(ledger.read_uledger_comment(x),

@@ -190,6 +190,13 @@ class Balance(dict):
         return super().__eq__(other)
     def __ne__(self, other):
         return not (self == other)
+    def copy(self):
+        return self.__copy__()
+    def __copy__(self):
+        b = Balance()
+        for i in self:
+            b[i] = self[i]
+        return b
 
 class Account():
     def __init__(self, name: str, parent: Union["Account", None] = None):
@@ -252,3 +259,10 @@ class Account():
         if x:
             return x.full_name() + ":" + self.name
         return self.name
+    def balance_excluding_children(self):
+        excl = self._balance.copy()
+        for child in self._children:
+            child_balance = self._children[child].balance
+            for cmdty in child_balance:
+                excl[cmdty] -= child_balance[cmdty]
+        return excl
