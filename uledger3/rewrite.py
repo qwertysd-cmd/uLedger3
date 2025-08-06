@@ -83,6 +83,16 @@ def print_transaction(txn, format_function):
             line += a + b
         print(line)
 
+def get_holding_period_years(buy, sell):
+    y = sell.year - buy.year
+    try:
+        x = sell.replace(year=buy.year)
+    except ValueError:
+        x = sell.replace(year=buy.year, day=sell.day-1)
+    if buy > x:
+        y = y - 1
+    return y
+
 def main():
     args = parse_args()
     journal, lines = read_journal(args.database)
@@ -116,7 +126,9 @@ def expand_and_apply_unit_rate(txn, account, format_function):
     equity_n = "Equity:Trading:Securities"
     equity = account[equity_n]
     gains_n = "Income:Capital Gains"
-    gains = account[gains_n]
+    total_gains = 0
+    losses_n = "Income:Capital Losses"
+    total_losses = 0
     for p in txn.contents:
         contents.append(p)
         if not isinstance(p, Posting):
@@ -152,7 +164,8 @@ def expand_and_apply_unit_rate(txn, account, format_function):
         commodity = p.amount.commodity
         remaining_balance = -p.amount.quantity
         assert remaining_balance > 0
-        equity_balance = 0
+        gain_equity = 0
+        loss_equity = 0
         contents.append(f"; Before this sale:")
         x = _get_sorted_positive_lots(
             commodity, p.amount.unit_rate.commodity, assets)
@@ -164,12 +177,25 @@ def expand_and_apply_unit_rate(txn, account, format_function):
                           format_function)
         c, d = amount2str(p.amount.unit_rate, format_function)
         contents.append(f"; Selling {a}{b} @ {c}{d} each.")
+        y = None
         while remaining_balance > 0:
             x = _get_sorted_positive_lots(
                 commodity, p.amount.unit_rate.commodity, account[p.account])
             if not x:
                 break
             selected = x[0]
+            y_ = get_holding_period_years(selected.date, txn.date)
+            if y != y_:
+                _apply_gains_losses_equity(total_gains, total_losses,
+                                           gain_equity, loss_equity,
+                                           contents, p.amount.unit_rate.commodity,
+                                           gains_n, losses_n, equity_n,
+                                           y, account)
+                total_gains = 0
+                total_losses = 0
+                gain_equity = 0
+                loss_equity = 0
+                y = y_
             min_bal = min(remaining_balance,
                           account[p.account].balance[selected])
             remaining_balance -= min_bal
@@ -179,7 +205,15 @@ def expand_and_apply_unit_rate(txn, account, format_function):
             amount = Amount(min_bal, selected)
             contents.append(Posting(equity_n, amount))
             equity += amount
-            equity_balance -= min_bal * selected.price.quantity
+            cost = min_bal * selected.price.quantity
+            proceeds = min_bal * p.amount.unit_rate.quantity
+            profit = proceeds - cost
+            if profit > 0:
+                total_gains += profit
+                gain_equity -= cost
+            else:
+                total_losses -= profit
+                loss_equity -= cost
         if remaining_balance != 0:
             sold = -p.amount.quantity - remaining_balance
             a, b = amount2str(Amount(sold, commodity),
@@ -188,20 +222,40 @@ def expand_and_apply_unit_rate(txn, account, format_function):
             a, b = amount2str(Amount(remaining_balance, commodity),
                               format_function)
             contents.append(f"; WARNING: Unsold balance is {a}{b}.")
-        amount = Amount(equity_balance, p.amount.unit_rate.commodity)
-        contents.append(Posting(equity_n, amount))
-        equity += amount
-        # `quantity` is negative and `remaining_balance` is positive.
-        # sold, proceeds, cost, profit are normally negative.
-        sold = p.amount.quantity + remaining_balance
-        proceeds = sold * p.amount.unit_rate.quantity
-        cost = equity_balance
-        profit = proceeds - equity_balance
-        amount = Amount(profit, p.amount.unit_rate.commodity)
-        contents.append(Posting(gains_n, amount))
-        gains += amount
+        _apply_gains_losses_equity(total_gains, total_losses,
+                                   gain_equity, loss_equity,
+                                   contents, p.amount.unit_rate.commodity,
+                                   gains_n, losses_n, equity_n,
+                                   y, account)
     txn.contents = contents
     return prices
+
+def _apply_gains_losses_equity(total_gains, total_losses,
+                               gain_equity, loss_equity,
+                               contents, commodity,
+                               gains_n, losses_n, equity_n,
+                               years, root):
+    gains = root[gains_n]
+    losses = root[losses_n]
+    equity = root[equity_n]
+    if total_gains or total_losses or gain_equity or loss_equity:
+        contents.append(f"; Holding Period -- {years} year(s).")
+    if gain_equity != 0:
+        amount = Amount(gain_equity, commodity)
+        contents.append(Posting(equity_n, amount))
+        equity += amount
+    if total_gains != 0:
+        amount = Amount(-total_gains, commodity)
+        contents.append(Posting(gains_n, amount))
+        gains += amount
+    if loss_equity != 0:
+        amount = Amount(loss_equity, commodity)
+        contents.append(Posting(equity_n, amount))
+        equity += amount
+    if total_losses != 0:
+        amount = Amount(total_losses, commodity)
+        contents.append(Posting(losses_n, amount))
+        losses += amount
 
 def _get_sorted_positive_lots(commodity, price_commodity, account):
     selected = []

@@ -6,8 +6,9 @@ from uledger3.ledger import Account, Balance
 from uledger3.exchange import Exchange
 from typing import Callable
 
-def read_journal(database: str) -> tuple[Journal, list[str]]:
-    p = parser.Parser(database, pedantic=True)
+def read_journal(database: str, pedantic: bool = True) \
+        -> tuple[Journal, list[str]]:
+    p = parser.Parser(database, pedantic)
     lines = []
     with open(database, "r") as database:
         for line in database:
