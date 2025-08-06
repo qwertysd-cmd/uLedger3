@@ -72,6 +72,15 @@ def _is_representable_by_precision(amount: Amount, precision: int):
     if amount.quantity == x:
         return True
 
+def lot2str(lot: Lot) -> str:
+    value = commodity2str(lot.commodity)
+    x, y = amount2str(amount.commodity.price, format_function)
+    value += " "
+    value += ("{" + x + y + "}")
+    value += " "
+    value += f"[{date2str(amount.commodity.date)}]"
+    return value
+
 def amount2str(amount: Amount, format_function,
                force_prec: bool = False, noquote: bool = False) \
     -> tuple[str, str]:
