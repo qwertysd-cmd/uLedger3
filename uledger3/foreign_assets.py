@@ -34,6 +34,8 @@ class Valuation():
     def __init__(self, startDate, endDate):
         self.startDate = startDate
         self.endDate = endDate
+        # {(Account, Lot)}
+        self.keys = set()
         # {(Account, Lot): (Peak Date, Amount, Latest Date)}
         self.peakValues: dict[tuple(str, str), tuple(datetime, Amount, datetime)] = {}
         # {("AAPL", "USD"): [(t1, t2, 195, date), (t2, t3, 192, date)]}
@@ -44,6 +46,7 @@ class Valuation():
         # {("AAPL", "USD"): (192, date)}
         self.closingPrices: dict[tuple(str, str), tuple(Decimal, datetime)] = {}
         self.root = Account("Root")
+        self.consolidatedRoot = Account("Consolidated Root")
 
     def getBalance(self, account, lot):
         b = self.root[account].balance
@@ -61,9 +64,15 @@ class Valuation():
 
     def applyPosting(self, p, date):
         key = (p.account, p.amount.commodity)
+        self.keys.add(key)
         if date >= self.startDate and date <= self.endDate :
             self.updatePeakValues(key, date)
         self.root[p.account] += p.amount
+        if isinstance(p.amount.commodity, Lot):
+            self.consolidatedRoot["Assets"] += Amount(
+                p.amount.quantity, p.amount.commodity.commodity)
+        else:
+            self.consolidatedRoot["Assets"] += p.amount
         if key not in self.initialValues:
             if isinstance(p.amount.commodity, Lot):
                 lot = p.amount.commodity
@@ -101,19 +110,19 @@ class Valuation():
                     commodity, currency, self.startDate, currentDate)
                 newPeakAmount = Amount(balance * tmp[0], currency)
                 newPeakDate = tmp[1]
-        logging.info(f"Updating peak date from {oldPeakDate} to {newPeakDate}.")
+        logger.info(f"Updating peak date from {oldPeakDate} to {newPeakDate}.")
         if (newPeakAmount.quantity > oldPeakAmount.quantity):
             self.peakValues[key] = (newPeakDate, newPeakAmount, currentDate)
         else:
             self.peakValues[key] = (oldPeakDate, oldPeakAmount, currentDate)
 
     def extendToEnd(self):
-        for i in self.peakValues:
+        for i in self.keys:
             self.updatePeakValues(i, self.endDate)
 
     def getPeakPrice(self, commodity, currency, startDate, endDate):
         if commodity == currency: return (Decimal(1), endDate)
-        if commodity == "US3160671075": return (Decimal(1), endDate)
+        if commodity == "": return (Decimal(1), endDate)
         x = (commodity, currency)
         peakPrice = None
         peakDate = None
@@ -284,6 +293,8 @@ def parseArgs():
     argparser.add_argument("--base-currency", type=str,
                            default="INR",
                            help="Base Currency")
+    argparser.add_argument("--commodity", type=str,
+                           help="Commodity")
     argparser.add_argument("--tree", action="store_true",
                            default=False,
                            help="Display a tree")
@@ -334,7 +345,11 @@ def main():
     with open(args.config_file, "r") as config_file:
         valuation.readClosingPrices(config_file)
 
-    foreign_accounts = []
+    foreignAccounts = []
+    dividendAccounts = []
+    payee2cmdty = {}
+    # {(Account, Lot): Amount}
+    dividendValues: dict[tuple(str, str), Amount] = {}
 
     for txn in journal.contents:
         if not isinstance(txn, Transaction):
@@ -344,10 +359,44 @@ def main():
         for p in txn.contents:
             if not isinstance(p, Posting): continue
             if parser.is_virtual_account(p.account): continue
-            if not p.account in foreign_accounts: continue
-            logging.info(f"Processing posting by {txn.payee} on "
-                         f"{txn.date.strftime('%Y-%m-%d')}.")
-            valuation.applyPosting(p, txn.date)
+            if isinstance(p.amount.commodity, Lot):
+                commodity = p.amount.commodity.commodity
+                if args.commodity and commodity != args.commodity: continue
+            d = txn.date.strftime('%Y-%m-%d')
+            if p.account in foreignAccounts:
+                logger.info(f"Processing posting by {txn.payee} on {d}.")
+                valuation.applyPosting(p, txn.date)
+            if (p.account in dividendAccounts and txn.payee in payee2cmdty):
+                a = p.amount
+                assert isinstance(a.commodity, str)
+                b = valuation.consolidatedRoot["Assets"].balance
+                cmdty = payee2cmdty[txn.payee]
+                qty_tot = b[cmdty]
+                logger.info(f"Dividend by {txn.payee} on {d}.")
+                logger.info(f"Current total quantity of {cmdty} is {qty_tot}.")
+                a2, x = convertForTax(exchange, txn.date, a, args.base_currency)
+                a_str = _amount2str(a, journal.get_commodity_format)
+                a2_str = _amount2str(a2, journal.get_commodity_format)
+                logger.info(f"Total dividend is {a_str} or {a2_str} "
+                            f"(Conversion Rate: {x})")
+                for i in foreignAccounts:
+                    b = valuation.root[i].balance
+                    for lot in b:
+                        if not isinstance(lot, Lot): continue
+                        if lot.commodity != cmdty: continue
+                        qty = b[lot]
+                        div = qty * a2.quantity / qty_tot
+                        amt = Amount(div, args.base_currency)
+                        amt_str = _amount2str(amt, journal.get_commodity_format)
+                        logger.info(f"Dividend of {amt_str} on {lot} in {i}"
+                                    f"(Conversion Rate: {x})")
+                        try:
+                            x = dividendValues[(i, lot)]
+                            dividendValues[(i, lot)] = Amount(
+                                -div + x.quantity, args.base_currency)
+                        except KeyError:
+                            dividendValues[(i, lot)] = Amount(
+                                -div, args.base_currency)
 
     valuation.extendToEnd()
     for i in valuation.peakValues:
@@ -355,54 +404,58 @@ def main():
         a, b = amount2str(
             Amount(Decimal(1), lot), journal.get_commodity_format)
         tmp = b if isinstance(lot, Lot) else a
-        print(f"{account} {tmp}")
+        print(f"\n{account} {tmp}")
 
         peakDate, amount, latestDate = valuation.peakValues[i]
-        dateStr = peakDate.strftime('%Y-%m-%d')
-        a, b = amount2str(amount, journal.get_commodity_format)
-        amountStr = a + b
-        print(f"> Peak value was {amountStr} on {dateStr}.")
-        amount = convertForTax(
-            exchange, peakDate, amount, args.base_currency)
-        a, b = amount2str(amount, journal.get_commodity_format)
-        amountStr = a + b
-        print(f"> Peak value was {amountStr} on {dateStr}.")
+        printValues(peakDate, amount, journal.get_commodity_format,
+                    args.base_currency, "Peak Value", exchange)
 
         initialDate, amount = valuation.initialValues[i]
-        dateStr = initialDate.strftime('%Y-%m-%d')
-        c, d = amount2str(amount, journal.get_commodity_format)
-        amountStr = c + d
-        print(f"> Initial value was {amountStr} on {dateStr}.")
-        amount = convertForTax(
-            exchange, peakDate, amount, args.base_currency)
-        a, b = amount2str(amount, journal.get_commodity_format)
-        amountStr = a + b
-        print(f"> Initial value was {amountStr} on {dateStr}.")
+        printValues(initialDate, amount, journal.get_commodity_format,
+                    args.base_currency, "Initial Value", exchange)
 
         closingDate, amount = valuation.getClosingValue(account, lot)
-        dateStr = closingDate.strftime('%Y-%m-%d')
-        c, d = amount2str(amount, journal.get_commodity_format)
-        amountStr = c + d
-        print(f"> Closing value was {amountStr} on {dateStr}.")
-        amount = convertForTax(
-            exchange, peakDate, amount, args.base_currency)
-        a, b = amount2str(amount, journal.get_commodity_format)
-        amountStr = a + b
-        print(f"> Closing value was {amountStr} on {dateStr}.")
+        printValues(closingDate, amount, journal.get_commodity_format,
+                    args.base_currency, "Closing Value", exchange)
+
+        try:
+            amount = dividendValues[(account, lot)]
+            amountStr = _amount2str(amount, journal.get_commodity_format)
+            print(f"  > Dividend Paid: {amountStr}")
+        except KeyError:
+            print(f"  > Dividend Paid: 0")
 
     with open(args.config_file, "w") as config_file:
         valuation.printPeakPrices(config_file)
         valuation.printClosingPrices(config_file)
 
+def printValues(date, amount, formatFunction, currency,
+                description, exchange):
+    dateStr = date.strftime('%Y-%m-%d')
+    amountStr = _amount2str(amount, formatFunction)
+    amount, x = convertForTax(exchange, date, amount, currency)
+    amountStr2 = _amount2str(amount, formatFunction)
+    print(f"  > {description} was {amountStr} on {dateStr}"
+          f" or {amountStr2} (Conversion Rate: {x}).")
+
+def _amount2str(amount, formatFunction):
+    if isinstance(amount.commodity, str):
+        fmt = formatFunction(amount.commodity)
+        if fmt:
+            q = Decimal(10) ** -fmt.precision # 2 places --> '0.01'
+            v = amount.quantity.quantize(q)
+            amount = Amount(v, amount.commodity)
+    a, b = amount2str(amount, formatFunction)
+    return a + b
+
 def convertForTax(exchange, date, amount, currency):
     lastDay = last_day_of_last_month(date)
     x = exchange.get_price(lastDay, amount.commodity, currency)
     if x:
-        logger.info(f"Found price: {x}")
-        return Amount(amount.quantity * x, currency)
+        return (Amount(amount.quantity * x, currency), x)
     else:
         logger.info(f"Unable to convert {amount.commodity} to {currency}.")
-        return amount
+        return (amount, 1)
 
 if __name__ == "__main__":
     main()
