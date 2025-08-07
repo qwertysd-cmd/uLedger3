@@ -124,7 +124,7 @@ def main():
         for p in txn.contents:
             if not isinstance(p, Posting): continue
             if parser.is_virtual_account(p.account): continue
-            if not re.match(args.account + "$", p.account): continue
+            if not re.match(args.account, p.account): continue
             logger.info(f"Processing posting by {txn.payee} on {txn.date}.")
             if (not args.convert or p.amount.commodity == args.base_currency):
                 root[txn.payee] -= p.amount

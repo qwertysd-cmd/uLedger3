@@ -126,9 +126,7 @@ def expand_and_apply_unit_rate(txn, account, format_function):
     equity_n = "Equity:Trading:Securities"
     equity = account[equity_n]
     gains_n = "Income:Capital Gains"
-    total_gains = 0
     losses_n = "Income:Capital Losses"
-    total_losses = 0
     for p in txn.contents:
         contents.append(p)
         if not isinstance(p, Posting):
@@ -164,6 +162,8 @@ def expand_and_apply_unit_rate(txn, account, format_function):
         commodity = p.amount.commodity
         remaining_balance = -p.amount.quantity
         assert remaining_balance > 0
+        total_gains = 0
+        total_losses = 0
         gain_equity = 0
         loss_equity = 0
         contents.append(f"; Before this sale:")
