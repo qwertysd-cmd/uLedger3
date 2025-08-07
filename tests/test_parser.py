@@ -271,6 +271,22 @@ class TestParser(unittest.TestCase):
         x = l._finish_parse_transaction_contents("  format  123.45 EUR ; k")
         self.assertEqual(x.account, "format")
         self.assertEqual(x.amount, parser.Amount(Decimal("123.45"), "EUR"))
+        self.assertEqual(x.assertion, None)
+        x = l._finish_parse_transaction_contents("  format  223.46 EUR = 65 USD ; k")
+        self.assertEqual(x.account, "format")
+        self.assertEqual(x.amount, parser.Amount(Decimal("223.46"), "EUR"))
+        self.assertEqual(x.assertion,
+                         parser.Amount(Decimal("65"), "USD"))
+        x = l._finish_parse_transaction_contents(
+            "  format  223.46 EUR = $256.239 [2022/01/17] {EUR 36.00} ; k")
+        self.assertEqual(x.account, "format")
+        self.assertEqual(x.amount, parser.Amount(Decimal("223.46"), "EUR"))
+        self.assertEqual(x.assertion,
+                         parser.Amount(Decimal('256.239'),
+                                        parser.Lot("$",
+                                                   datetime(2022, 1, 17),
+                                                   parser.Amount(Decimal('36'),
+                                                                 "EUR"))))
 
     def test_parser_parse_line(self):
         l = parser.Parser("test", pedantic=True)

@@ -347,7 +347,7 @@ def main():
 
     foreignAccounts = []
     dividendAccounts = []
-    # payee2cmdty = {}
+    payee2cmdty = {}
     # {(Account, Lot): Amount}
     dividendValues: dict[tuple(str, str), Amount] = {}
 

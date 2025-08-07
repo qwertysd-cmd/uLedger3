@@ -118,7 +118,7 @@ class Exchange():
         #  (commodity, date, factor),
         #  ...]
         #
-        # If a path is found, this variable is assigned to it.
+        # If a path is found, it is assigned to this variable.
         found = None
 
         debug = False

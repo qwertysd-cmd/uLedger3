@@ -128,10 +128,11 @@ class Amount(Entity):
         return f"Amount({self.quantity}, {self.commodity}, {self.unit_rate})"
 
 class Posting(Entity):
-    def __init__(self, account: str, amount: Amount):
+    def __init__(self, account: str, amount: Amount, assertion: Amount = None):
         super().__init__()
         self.account = account
         self.amount = amount
+        self.assertion = assertion
 
 def parse_date(line: str, begin: int = 0) -> tuple[datetime | None, int]:
     if len(line) <= begin:
@@ -363,6 +364,23 @@ class Parser():
                     "Account '{}' not declared".format(account),
                     Position(self._current_line_number, begin), line)
 
+    def _parse_balance_assertion(self, line: str, begin: int) \
+        -> tuple[Amount | None, int]:
+        if len(line) <= begin:
+            return (None, len(line))
+        space, consumed = parse_space(line, begin)
+        if line[consumed] != "=":
+            return (None, begin)
+        consumed += 1
+        space, consumed = self._parse_space_or_error(
+            "Balance assertion ill formed.", line, consumed)
+        amount, consumed = self._parse_amount(line, consumed)
+        if not amount:
+            raise ParseError(
+                "Balance assertion ill formed.",
+                Position(self._current_line_number, consumed), line)
+        return (amount, consumed)
+
     def _parse_amount(self, line: str, begin: int = 0) \
         -> tuple[Amount | None, int]:
         if len(line) <= begin:
@@ -578,13 +596,13 @@ class Parser():
                 "Posting not well formed",
                 Position(self._current_line_number, consumed), line)
         amount, consumed = self._parse_amount(line, consumed)
+        assertion, consumed = self._parse_balance_assertion(line, consumed)
         space, consumed = parse_space(line, consumed)
         comment, consumed = parse_comment(line, consumed)
         if (not amount) or (consumed < len(line)):
-            raise ParseError(
-                "Format statement not well formed",
+            raise ParseError("Posting not well formed",
                 Position(self._current_line_number, consumed), line)
-        return Posting(account, amount)
+        return Posting(account, amount, assertion)
 
     def parse_line(self, line: str) -> None:
         self._current_line_number += 1
