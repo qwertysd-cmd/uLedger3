@@ -8,7 +8,7 @@ class TestExchange(unittest.TestCase):
 
     def test_search_date(self):
         x = [
-            (datetime(2001, 2, 3), 0.1),
+            (datetime(2001, 2, 3), 0.1) ,
 
             (datetime(2002, 2, 3), 0.1),
             (datetime(2002, 2, 3), 0.4),
