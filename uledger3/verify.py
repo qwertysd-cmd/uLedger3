@@ -26,7 +26,7 @@ def check_journal(journal: Journal, lines: list[str]):
             continue
         ledger.check_transaction(i, lines)
         check_trading_equity(i, lines)
-        apply_transaction(i, root, real=True, lots=True,
+        apply_transaction(i, root, real=True, lots=False,
                           assertions=True, lines=lines)
 
 def _read_exchange_rate_comment(comment: str) -> tuple[str, Amount] | None:

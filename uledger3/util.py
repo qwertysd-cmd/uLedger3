@@ -35,9 +35,9 @@ def apply_transaction(txn: Transaction, account: Account,
                                  post_amount.commodity.commodity)
         account[post_account] += post_amount
         if assertions and p.assertion:
+            cmdty = p.assertion.commodity
             actual = parser.Amount(
-                account[post_account].balance[post_amount.commodity],
-                post_amount.commodity)
+                account[post_account].balance[cmdty], p.assertion.commodity)
             expected = p.assertion
             if actual != expected: raise ledger.BalanceError(
                 f"Balance assertion failed: {expected} != {actual}.",
