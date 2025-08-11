@@ -167,9 +167,9 @@ def parse_commodity(line: str, begin: int = 0, relaxed=False) \
         return (None, len(line))
     line = line[begin:]
     quoted = '["\']([^"\']+)["\']'
-    unquoted = '[^\s@0-9-"\'&]+'
+    unquoted = '[^\s@0-9-="\'&]+'
     if relaxed:
-        unquoted = '[^\s@"\']+'
+        unquoted = '[^\s@="\']+'
     m = re.match(quoted, line)
     if m:
         return (m.group(1), begin + m.end())

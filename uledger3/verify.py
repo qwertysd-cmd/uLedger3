@@ -9,9 +9,11 @@ from uledger3.parser import Amount, Lot, Transaction, \
     Posting, Position, Journal, Entity, PriceDecl
 from uledger3.ledger import Account
 from uledger3.util import read_journal
+from uledger3.util import apply_transaction
 
 def check_journal(journal: Journal, lines: list[str]):
     last_date = None
+    root = Account("root")
     for i in journal.contents:
         if not (isinstance(i, Transaction) or
                 isinstance(i, PriceDecl)):
@@ -24,6 +26,8 @@ def check_journal(journal: Journal, lines: list[str]):
             continue
         ledger.check_transaction(i, lines)
         check_trading_equity(i, lines)
+        apply_transaction(i, root, real=True, lots=True,
+                          assertions=True, lines=lines)
 
 def _read_exchange_rate_comment(comment: str) -> tuple[str, Amount] | None:
     x = ledger.read_uledger_comment(comment)

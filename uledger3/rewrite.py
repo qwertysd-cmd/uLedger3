@@ -68,6 +68,7 @@ def print_transaction(txn, format_function):
             continue
         account = p.account
         amount = p.amount
+        assertion = p.assertion
         line = indent + account
         if not amount:
             print(line)
@@ -77,6 +78,11 @@ def print_transaction(txn, format_function):
         left = hard_space + left
         line += left.rjust(alignment_column - len(line))
         line += right
+
+        if assertion:
+            left, right = amount2str(assertion, format_function)
+            line += f" = {left}{right}"
+
         if amount.unit_rate:
             line += " @ "
             a, b = amount2str(amount.unit_rate, format_function)

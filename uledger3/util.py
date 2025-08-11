@@ -19,7 +19,9 @@ def read_journal(database: str, pedantic: bool = True) \
     return (journal, lines)
 
 def apply_transaction(txn: Transaction, account: Account,
-                      real: bool = False, lots: bool = False):
+                      real: bool = False, lots: bool = False,
+                      assertions: bool = False,
+                      lines: list[str] = None):
     ledger.unelide_transaction(txn)
     for p in txn.contents:
         if not isinstance(p, Posting):
@@ -32,6 +34,14 @@ def apply_transaction(txn: Transaction, account: Account,
             post_amount = Amount(post_amount.quantity,
                                  post_amount.commodity.commodity)
         account[post_account] += post_amount
+        if assertions and p.assertion:
+            actual = parser.Amount(
+                account[post_account].balance[post_amount.commodity],
+                post_amount.commodity)
+            expected = p.assertion
+            if actual != expected: raise ledger.BalanceError(
+                f"Balance assertion failed: {expected} != {actual}.",
+                txn, lines)
 
 def apply_journal(journal: Journal, account: Account,
                   real: bool = False, lots: bool = False):
