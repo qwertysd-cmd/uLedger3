@@ -345,7 +345,7 @@ def main():
     with open(args.config_file, "r") as config_file:
         valuation.readClosingPrices(config_file)
 
-    foreignAccounts = []]
+    foreignAccounts = []
     dividendAccounts = []
     payee2cmdty = {}
     # {(Account, Lot): Amount}
