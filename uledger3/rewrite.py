@@ -81,8 +81,7 @@ def print_transaction(txn, format_function):
 
         if assertion:
             left, right = amount2str(assertion, format_function)
-            if right:
-                left = left.rjust(10)
+            left = left.rjust(10)
             line += f" = {left}{right}"
 
         if amount.unit_rate:
