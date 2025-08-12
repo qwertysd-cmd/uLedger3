@@ -41,7 +41,7 @@ def apply_transaction(txn: Transaction, account: Account,
             expected = p.assertion
             if actual != expected: raise ledger.BalanceError(
                 f"Balance assertion failed: {expected} != {actual}.",
-                txn, lines)
+                p.assertion, lines)
 
 def apply_journal(journal: Journal, account: Account,
                   real: bool = False, lots: bool = False):
