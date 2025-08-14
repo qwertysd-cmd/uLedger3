@@ -73,11 +73,11 @@ def main():
 
     updates.sort(reverse=True)
     for i in updates:
-        x = str(i[0]).ljust(3)
+        x = str(i[0]).ljust(5)
         a, b = amount2str(Amount(Decimal(0), i[2]),
                           journal.get_commodity_format)
         amount = a.rjust(10) + b
-        print(f"{x} days ago:  {i[1].ljust(50)} INR 0.00 = {amount}")
+        print(f"{x} {i[1].ljust(50)} INR 0.00 = {amount}")
 
 if __name__ == "__main__":
     main()
