@@ -15,7 +15,6 @@ from uledger3.printing import amount2str, date2str, \
     commodity2str
 from uledger3.ledger import Account, BalanceError, \
     transaction_has_unit_rates
-from uledger3.rewrite import print_transaction
 
 def parse_args():
     argparser = argparse.ArgumentParser()
