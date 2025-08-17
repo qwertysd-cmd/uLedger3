@@ -1,0 +1,94 @@
+
+account Assets:HDFC Bank:Savings
+  alias hdfc
+account Assets:Indian Overseas Bank:Savings
+  alias iob
+account Assets:Indian Overseas Bank:UPI Lite:BHIM
+account Assets:Indian Overseas Bank:UPI Lite:Google Pay
+  alias gpay
+account Assets:SBI:Savings
+  alias sbi
+
+account Expenses:Automotive:Fuel
+account Expenses:Automotive:Maintenance
+account Expenses:Automotive:Other
+account Expenses:Food and Drinks
+  alias food
+account Expenses:Entertainment
+  alias entertainment
+
+account Equity:Adjustments
+account Equity:Opening Balances
+account Equity:Trading:Currency
+account Equity:Trading:Securities
+
+account Income:Interest
+account Income:Other
+account Income:Salary:Base
+account Income:Salary:Bonus
+account Income:Rewards:Axis Credit Card
+account Income:Rewards:Google Pay
+
+account Liabilities:Axis Bank:Credit Card
+
+commodity USD
+  format USD 1,000.00
+commodity EUR
+  format EUR 1,000.00
+commodity GBP
+  format GBP 1,000.00
+commodity JPY
+  format JPY 1,000.00
+commodity CHF
+  format CHF 1,000.00
+commodity INR
+  format INR 1,000.00
+  default
+
+commodity ONGC
+  format 1000 ONGC
+commodity NTPC
+  format 1000 NTPC
+commodity BHEL
+commodity INDIGO
+commodity "US4581401001"
+commodity "US0326541051"
+
+2020/01/01 * Opening Balances
+  sbi                                                INR 1500
+  hdfc                                                INR 1900
+  Equity:Opening Balances
+
+2020/01/02 * Supermarket
+  ; This is a comment.
+  food                                            INR 100
+  ; Using the default currency here.
+  Liabilities:Axis Bank:Credit Card                                  -100
+
+2020/01/02 * ABC Fuel Station
+  ; 6 litres @ 100 Rs/L
+  Expenses:Automotive:Fuel                  600
+  ; Fill air in tyres.
+  Expenses:Automotive:Maintenance                  10
+  ; You can omit a posting if it can be calculated from the others.
+  Liabilities:Axis Bank:Credit Card                                
+
+2020/01/03 * Supermarket
+  food                                            INR 100
+  ; Assert the balance after applying this posting.
+  Liabilities:Axis Bank:Credit Card                                  -100 = -810
+
+2020/01/04 * Supermarket
+  food                                            INR 100
+  Liabilities:Axis Bank:Credit Card                                  -100 = -910
+
+2020/01/05 * Foreign Employer
+  Income:Salary:Base                                                       -1001 USD
+  ; You must specify the exchange rate with enough precision that the converted
+  ; amount is within tolerance.
+  ;
+  ; [uledger] Exchange Rate -- USD 1.00 = INR 81.68448
+  Equity:Trading:Currency                                                1001USD
+  Equity:Trading:Currency                                         -81766.16
+  sbi
+
