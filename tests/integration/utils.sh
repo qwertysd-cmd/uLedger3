@@ -22,9 +22,5 @@ run_and_expect_error() {
     return 1
   fi
 
-  if echo "$output" | grep -q "$error"; then
-    :
-  else
-    die "$command did not raise $error."
-  fi
+  echo "$output" | grep -q "$error"
 }
