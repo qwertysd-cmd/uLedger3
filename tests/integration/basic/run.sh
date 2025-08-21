@@ -32,3 +32,6 @@ try run_and_expect_error "$ULEDGER3_SCRIPTS/verify.py bad-3.ledger" \
 
 try run_and_expect_error "$ULEDGER3_SCRIPTS/verify.py bad-4.ledger" \
     "ParseError: Account 'foodx' not declared"
+
+try run_and_expect_error "$ULEDGER3_SCRIPTS/verify.py bad-5.ledger" \
+    "LedgerError: Dates out of order"
