@@ -1,0 +1,9 @@
+         $-250372.99  Assets
+         $-123694.07    Bank
+         $-126678.92    Cash
+          $373119.78  Expenses
+          $190811.62    Food
+          $182308.16    Travel
+         $-122746.79  Liabilities:CreditCard
+--------------------
+                   0
